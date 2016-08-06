@@ -243,12 +243,12 @@ extern "C"   // ensure function name to be exactly "vadd"
     }
 
 
-    // //Boundary bounce condition
-    //   if ( coord==1 && t_j == 0 ) vx_l = -vx_c;
-    //     //Boundary bounce condition
-    //   if ( coord==2 && t_i == 0 ) vy_l = -vy_c;
-    //   //Boundary bounce condition
-    //   if ( coord==3 && t_k == 0 ) vz_l = -vz_c;
+    //Boundary bounce condition
+      if ( coord==1 && t_j == 0 ) vx_l = -vx_c;
+        //Boundary bounce condition
+      if ( coord==2 && t_i == 0 ) vy_l = -vy_c;
+      //Boundary bounce condition
+      if ( coord==3 && t_k == 0 ) vz_l = -vz_c;
 
     v2    = vx_l*vx_l + vy_l*vy_l + vz_l*vz_l;
     p_l   = ( E_l - rho_l*v2/2 ) * (gamma-1);
@@ -313,12 +313,12 @@ extern "C"   // ensure function name to be exactly "vadd"
     vz_c  = bound_4_r[boundId] / rho_c;
     E_c   = bound_5_r[boundId];
 
-    // // //Boundary bounce conditions
-    // if ( coord==1 && t_j == (N_W-1) ) vx_c = -vx_l;
-    //   //Boundary bounce condition
-    // if ( coord==2 && t_i == (N_H-1) ) vy_c = -vy_l;
-    // //Boundary bounce condition
-    // if ( coord==3 && t_k == (N_D-1) ) vz_c = -vz_l;
+    // //Boundary bounce conditions
+    if ( coord==1 && t_j == (N_W-1) ) vx_c = -vx_l;
+      //Boundary bounce condition
+    if ( coord==2 && t_i == (N_H-1) ) vy_c = -vy_l;
+    //Boundary bounce condition
+    if ( coord==3 && t_k == (N_D-1) ) vz_c = -vz_l;
 
     v2    = vx_c*vx_c + vy_c*vy_c + vz_c*vz_c;
     p_c   = ( E_c - rho_c*v2/2 ) * (gamma-1);
