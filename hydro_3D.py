@@ -46,7 +46,8 @@ ensureDirectory( outDir )
 nWidth = nPoints
 nHeight = nPoints
 nDepth = nPoints
-nData = nWidth*nHeight*nDepth
+nCells = nWidth*nHeight*nDepth
+nFields = 5
 
 Lx = 1.
 Ly = 1.
@@ -102,6 +103,8 @@ nPointsBlock = block3D[0]*block3D[1]*block3D[2]
 nBlocksGrid = gridx * gridy * gridz
 block2D = ( 16, 16, 1 )
 grid2D = ( nWidth/block2D[0],  nHeight/block2D[1], 1 )
+block1D = (512,1,1)
+grid1D = (nCells/block1D[0], 1, 1)
 
 print "\nCompiling CUDA code"
 cudaCodeFile = open("cuda_hydro_3D.cu","r")
@@ -115,22 +118,25 @@ setBounderies_knl = cudaCode.get_function('setBounderies')
 setInterFlux_hll_knl = cudaCode.get_function('setInterFlux_hll')
 getInterFlux_hll_knl = cudaCode.get_function('getInterFlux_hll')
 addDtoD_knl = cudaCode.get_function('addDtoD')
+convertToUCHAR = cudaCode.get_function('convertToUCHAR')
+reduction_min_kernel = cudaCode.get_function('reduction_min_kernel')
+reduction_max_kernel = cudaCode.get_function('reduction_max_kernel')
 # reduceDensity_kernel = cudaCode.get_function('reduceDensity' )
 
 ########################################################################
-convertToUCHAR = ElementwiseKernel(arguments="cudaP normaliztion, cudaP *values, unsigned char *psiUCHAR".replace("cudaP", cudaP),
-			      operation = "psiUCHAR[i] = (unsigned char) ( -255*( values[i]*normaliztion -1 ) );",
-			      name = "sendModuloToUCHAR_kernel")
+# convertToUCHAR_old = ElementwiseKernel(arguments="const int field, const int nCells, cudaP normaliztion, cudaP *values, unsigned char *psiUCHAR".replace("cudaP", cudaP),
+# 			      operation = "psiUCHAR[i] = (unsigned char) ( -255*( values[field*nCells + i]*normaliztion -1 ) );",
+# 			      name = "sendModuloToUCHAR_kernel")
 ########################################################################
-getTimeMin_kernel = ReductionKernel( np.dtype( cudaPre ),
-			    neutral = "1e6",
-			    arguments=" float delta, cudaP* cnsv_rho, cudaP* cnsv_vel, float* soundVel".replace("cudaP", cudaP),
-			    map_expr = " delta / ( abs( cnsv_vel[i]/ cnsv_rho[i] ) +  soundVel[i]   )    ",
-			    reduce_expr = "min(a,b)",
-			    name = "getTimeMin_kernel")
+# getTimeMin_kernel = ReductionKernel( np.dtype( cudaPre ),
+# 			    neutral = "1e6",
+# 			    arguments=" float delta, cudaP* cnsv_rho, cudaP* cnsv_vel, float* soundVel".replace("cudaP", cudaP),
+# 			    map_expr = " delta / ( abs( cnsv_vel[i]/ cnsv_rho[i] ) +  soundVel[i]   )    ",
+# 			    reduce_expr = "min(a,b)",
+# 			    name = "getTimeMin_kernel")
 ###################################################
 def timeStepHydro():
-  setBounderies_knl( cnsv1_d, cnsv2_d, cnsv3_d, cnsv4_d, cnsv5_d,
+  setBounderies_knl( np.int32(nCells), cnsv_d,
       bound_1_l_d, bound_1_r_d, bound_1_d_d, bound_1_u_d, bound_1_b_d, bound_1_t_d,
       bound_2_l_d, bound_2_r_d, bound_2_d_d, bound_2_u_d, bound_2_b_d, bound_2_t_d,
       bound_3_l_d, bound_3_r_d, bound_3_d_d, bound_3_u_d, bound_3_b_d, bound_3_t_d,
@@ -151,28 +157,31 @@ def timeStepHydro():
       bound_1_r_temp, bound_2_r_temp, bound_3_r_temp, bound_4_r_temp, bound_5_r_temp = bound_1_t_d, bound_2_t_d, bound_3_t_d, bound_4_t_d, bound_5_t_d
       iFlx_1_bound_temp, iFlx_2_bound_temp, iFlx_3_bound_temp, iFlx_4_bound_temp, iFlx_5_bound_temp = iFlx1_bnd_t_d, iFlx2_bnd_t_d, iFlx3_bnd_t_d, iFlx4_bnd_t_d, iFlx5_bnd_t_d
 
-    setInterFlux_hll_knl( np.int32( coord ), gamma, dx, dy, dz,
-      cnsv1_d, cnsv2_d, cnsv3_d, cnsv4_d, cnsv5_d,
+    setInterFlux_hll_knl( np.int32( coord ), np.int32(nCells), gamma, dx, dy, dz,
+      cnsv_d,
       iFlx1_d, iFlx2_d, iFlx3_d, iFlx4_d, iFlx5_d,
       bound_1_l_temp, bound_2_l_temp, bound_3_l_temp, bound_4_l_temp, bound_5_l_temp,
       bound_1_r_temp, bound_2_r_temp, bound_3_r_temp, bound_4_r_temp, bound_5_r_temp,
       iFlx_1_bound_temp, iFlx_2_bound_temp, iFlx_3_bound_temp, iFlx_4_bound_temp, iFlx_5_bound_temp,
       times_d,  grid=grid3D, block=block3D )
     if coord == 1:
-      dt = c0 * gpuarray.min( times_d ).get()
+      dt = c0 * reduction_min( times_d, prePartialSum_d, partialSum_h, partialSum_d )
       # print dt
-    getInterFlux_hll_knl( np.int32( coord ),  cudaPre(dt), gamma, dx, dy, dz,
-        cnsv1_adv_d, cnsv2_adv_d, cnsv3_adv_d, cnsv4_adv_d, cnsv5_adv_d,
+      # dt = c0 * gpuarray.min( times_d ).get()
+      # print dt
+    getInterFlux_hll_knl( np.int32( coord ),  np.int32(nCells), cudaPre(dt), gamma, dx, dy, dz,
+        cnsv_adv_d,
         iFlx1_d, iFlx2_d, iFlx3_d, iFlx4_d, iFlx5_d,
         iFlx_1_bound_temp, iFlx_2_bound_temp, iFlx_3_bound_temp, iFlx_4_bound_temp, iFlx_5_bound_temp, grid=grid3D, block=block3D )
-  addDtoD_knl(cnsv1_d, cnsv2_d, cnsv3_d, cnsv4_d, cnsv5_d,
-      cnsv1_adv_d, cnsv2_adv_d, cnsv3_adv_d, cnsv4_adv_d, cnsv5_adv_d, grid=grid3D, block=block3D)
+  addDtoD_knl( np.int32(nCells), cnsv_d, cnsv_adv_d, grid=grid3D, block=block3D)
 
 
 def stepFuntion():
-  maxVal = ( gpuarray.max( cnsv1_d ) ).get()
+  # maxVal = ( gpuarray.max( cnsv1_d ) ).get()
+  maxVal = reduction_max( cnsv_d, prePartialSum_d, partialSum_h, partialSum_d )
   # maxVal = 1.
-  convertToUCHAR( cudaPre( 0.95/maxVal ), cnsv1_d, plotData_d)
+  # convertToUCHAR_old( np.int32(0), np.int32(nCells), cudaPre( 0.95/maxVal ), cnsv1_d, plotData_d)
+  convertToUCHAR( np.int32(0), np.int32(nCells), cudaPre( 0.95/maxVal ), cnsv_d, plotData_d, grid=grid1D, block=block1D)
   copyToScreenArray()
   timeStepHydro()
   # if usingGravity: getGravForce()
@@ -216,6 +225,7 @@ cnsv2_h = rho * vx
 cnsv3_h = rho * vy
 cnsv4_h = rho * vz
 cnsv5_h = rho*v2/2. + p/(gamma-1)
+cnsv_h = np.array([ cnsv1_h, cnsv2_h, cnsv3_h, cnsv4_h, cnsv5_h ])
 #Arrays for bounderies
 ZEROS_HD, ZEROS_WD, ZEROS_WH = np.zeros( [ nHeight, nDepth ], dtype=cudaPre ), np.zeros( [ nWidth, nDepth ], dtype=cudaPre ), np.zeros( [ nWidth, nHeight ], dtype=cudaPre )
 bound_l_h = np.zeros_like( ZEROS_HD )
@@ -226,16 +236,8 @@ bound_b_h = np.zeros_like( ZEROS_WH )
 bound_t_h = np.zeros_like( ZEROS_WH )
 #####################################################
 #Initialize device global data
-cnsv1_d = gpuarray.to_gpu( cnsv1_h )
-cnsv2_d = gpuarray.to_gpu( cnsv2_h )
-cnsv3_d = gpuarray.to_gpu( cnsv3_h )
-cnsv4_d = gpuarray.to_gpu( cnsv4_h )
-cnsv5_d = gpuarray.to_gpu( cnsv5_h )
-cnsv1_adv_d = gpuarray.to_gpu( cnsv1_h )
-cnsv2_adv_d = gpuarray.to_gpu( cnsv2_h )
-cnsv3_adv_d = gpuarray.to_gpu( cnsv3_h )
-cnsv4_adv_d = gpuarray.to_gpu( cnsv4_h )
-cnsv5_adv_d = gpuarray.to_gpu( cnsv5_h )
+cnsv_d = gpuarray.to_gpu( cnsv_h )
+cnsv_adv_d = gpuarray.to_gpu( cnsv_h )
 ZEROS = np.zeros( X.shape, dtype=cudaPre )
 times_d = gpuarray.to_gpu( np.zeros( X.shape, dtype=cudaPre ) )
 iFlx1_d = gpuarray.to_gpu( ZEROS )
@@ -263,6 +265,26 @@ bound_4_b_d, bound_4_t_d = gpuarray.to_gpu( bound_b_h ), gpuarray.to_gpu( bound_
 bound_5_l_d, bound_5_r_d = gpuarray.to_gpu( bound_l_h ), gpuarray.to_gpu( bound_r_h )
 bound_5_d_d, bound_5_u_d = gpuarray.to_gpu( bound_d_h ), gpuarray.to_gpu( bound_u_h )
 bound_5_b_d, bound_5_t_d = gpuarray.to_gpu( bound_b_h ), gpuarray.to_gpu( bound_t_h )
+#Arrays for reductions
+blockSize_reduc = 512
+gridSize_reduc = nCells / blockSize_reduc  / 2
+last_gridSize = gridSize_reduc / blockSize_reduc / 2
+prePartialSum_d = gpuarray.to_gpu( np.zeros( gridSize_reduc, dtype=cudaPre ) )
+partialSum_h = np.zeros( last_gridSize, dtype=cudaPre )
+partialSum_d = gpuarray.to_gpu( partialSum_h )
+
+def reduction_min( data_d, prePartialSum_d, partialSum_h, partialSum_d ):
+  reduction_min_kernel(  data_d, prePartialSum_d , grid=(gridSize_reduc,1,1) , block=(blockSize_reduc,1,1) )
+  reduction_min_kernel( prePartialSum_d, partialSum_d, grid=(last_gridSize,1,1), block=(blockSize_reduc,1,1) )
+  partialSum_h = partialSum_d.get()
+  return  partialSum_h.min()
+
+def reduction_max( data_d, prePartialSum_d, partialSum_h, partialSum_d ):
+  reduction_max_kernel(  data_d, prePartialSum_d , grid=(gridSize_reduc,1,1) , block=(blockSize_reduc,1,1) )
+  reduction_max_kernel( prePartialSum_d, partialSum_d, grid=(last_gridSize,1,1), block=(blockSize_reduc,1,1) )
+  partialSum_h = partialSum_d.get()
+  return  partialSum_h.max()
+
 if usingAnimation:
   plotData_d = gpuarray.to_gpu(np.zeros([nDepth, nHeight, nWidth], dtype = np.uint8))
   volumeRender.plotData_dArray, copyToScreenArray = gpuArray3DtocudaArray( plotData_d )

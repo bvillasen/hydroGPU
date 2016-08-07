@@ -4,27 +4,63 @@
 #define N_H N_HEIGHT
 #define N_D N_DEPTH
 
-extern "C"   // ensure function name to be exactly "vadd"
+extern "C"   // ensure functions name to be exactly the same as below
 {
+	__global__ void convertToUCHAR( const int field, const int nCells, cudaP normaliztion, cudaP *values, unsigned char *psiUCHAR ){
+		int tid = blockIdx.x*blockDim.x + threadIdx.x;
+		psiUCHAR[tid] = (unsigned char) ( -255*( values[field*nCells + tid]*normaliztion -1 ));
+	}
+	///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+	///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+	__global__ void reduction_max_kernel( double *input, double *output ){
+		__shared__ double sh_data[512];
+
+		unsigned int tid = threadIdx.x;
+		unsigned int i   = blockIdx.x * blockDim.x  + threadIdx.x;
+		sh_data[tid] = max( input[i], input[i + blockDim.x*gridDim.x ] ) ;
+		__syncthreads();
+
+		for( unsigned int s = blockDim.x/2; s>0; s >>= 1){
+			if ( tid < s ) sh_data[tid] = max( sh_data[tid], sh_data[tid+s] );
+			__syncthreads();
+		}
+
+		if ( tid == 0 ) output[ blockIdx.x ] = sh_data[0];
+	}
   ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
   ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-	__device__ void writeBound(  const int boundAxis,
-                  double *cnsv_1, double *cnsv_2, double *cnsv_3, double *cnsv_4, double *cnsv_5,
+	__global__ void reduction_min_kernel( double *input, double *output ){
+		__shared__ double sh_data[512];
+
+		unsigned int tid = threadIdx.x;
+		unsigned int i   = blockIdx.x * blockDim.x  + threadIdx.x;
+		sh_data[tid] = min( input[i], input[i + blockDim.x*gridDim.x ] ) ;
+		__syncthreads();
+
+		for( unsigned int s = blockDim.x/2; s>0; s >>= 1){
+			if ( tid < s ) sh_data[tid] = min( sh_data[tid], sh_data[tid+s] );
+			__syncthreads();
+		}
+
+		if ( tid == 0 ) output[ blockIdx.x ] = sh_data[0];
+	}
+  ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+  ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+	__device__ void writeBound(  const int boundAxis, const int nCells, double *cnsv,
                   double *bound_1, double *bound_2, double *bound_3, double *bound_4, double *bound_5,
                   const int t_j, const int t_i, const int t_k, const int tid ){
     int boundId;
     if ( boundAxis == 1 ) boundId = t_i + t_k*N_H;  //X BOUNDERIES
     if ( boundAxis == 2 ) boundId = t_j + t_k*N_W;   //Y BOUNDERIES
     if ( boundAxis == 3 ) boundId = t_j + t_i*N_W;   //Z BOUNDERIES
-    bound_1[boundId] = cnsv_1[tid];
-    bound_2[boundId] = cnsv_2[tid];
-    bound_3[boundId] = cnsv_3[tid];
-    bound_4[boundId] = cnsv_4[tid];
-    bound_5[boundId] = cnsv_5[tid];
+    bound_1[boundId] = cnsv[0*nCells + tid];
+    bound_2[boundId] = cnsv[1*nCells + tid];
+    bound_3[boundId] = cnsv[2*nCells + tid];
+    bound_4[boundId] = cnsv[3*nCells + tid];
+    bound_5[boundId] = cnsv[4*nCells + tid];
   }
 
-  __global__ void setBounderies(
-         double* cnsv_1, double* cnsv_2, double* cnsv_3, double* cnsv_4, double* cnsv_5,
+  __global__ void setBounderies( const int nCells, double *cnsv,
          double* bound_1_l, double* bound_1_r, double* bound_1_d, double* bound_1_u, double* bound_1_b, double *bound_1_t,
          double* bound_2_l, double* bound_2_r, double* bound_2_d, double* bound_2_u, double* bound_2_b, double *bound_2_t,
          double* bound_3_l, double* bound_3_r, double* bound_3_d, double* bound_3_u, double* bound_3_b, double *bound_3_t,
@@ -42,29 +78,29 @@ extern "C"   // ensure function name to be exactly "vadd"
     if ( !boundBlock ) return;
 
     if ( t_j==0 )
-      writeBound( 1, cnsv_1, cnsv_2, cnsv_3, cnsv_4, cnsv_5,
+      writeBound( 1, nCells, cnsv,
         bound_1_l, bound_2_l, bound_3_l, bound_4_l, bound_5_l,
         t_j, t_i, t_k, tid );
     if ( t_j==(N_W-1) )
-      writeBound( 1, cnsv_1, cnsv_2, cnsv_3, cnsv_4, cnsv_5,
+      writeBound( 1, nCells, cnsv,
         bound_1_r, bound_2_r, bound_3_r, bound_4_r, bound_5_r,
         t_j, t_i, t_k, tid );
 
     if ( t_i==0 )
-      writeBound( 2, cnsv_1, cnsv_2, cnsv_3, cnsv_4, cnsv_5,
+      writeBound( 2, nCells, cnsv,
         bound_1_d, bound_2_d, bound_3_d, bound_4_d, bound_5_d,
         t_j, t_i, t_k, tid );
     if ( t_i==(N_H-1) )
-      writeBound( 2, cnsv_1, cnsv_2, cnsv_3, cnsv_4, cnsv_5,
+      writeBound( 2, nCells, cnsv,
         bound_1_u, bound_2_u, bound_3_u, bound_4_u, bound_5_u,
         t_j, t_i, t_k, tid );
 
     if ( t_k==0 )
-      writeBound( 3, cnsv_1, cnsv_2, cnsv_3, cnsv_4, cnsv_5,
+      writeBound( 3, nCells, cnsv,
         bound_1_b, bound_2_b, bound_3_b, bound_4_b, bound_5_b,
         t_j, t_i, t_k, tid );
     if ( t_k==(N_D-1) )
-      writeBound( 3, cnsv_1, cnsv_2, cnsv_3, cnsv_4, cnsv_5,
+      writeBound( 3, nCells, cnsv,
         bound_1_t, bound_2_t, bound_3_t, bound_4_t, bound_5_t,
         t_j, t_i, t_k, tid );
   }
@@ -164,8 +200,8 @@ extern "C"   // ensure function name to be exactly "vadd"
   }
 	///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 	///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-  __global__ void setInterFlux_hll( const int coord, const double gamma, const double dx, const double dy, const double dz,
-  			 double* cnsv_1, double* cnsv_2, double* cnsv_3, double* cnsv_4, double* cnsv_5,
+  __global__ void setInterFlux_hll( const int coord, const int nCells, const double gamma, const double dx, const double dy, const double dz,
+				 double *cnsv,
          double* iFlx_1, double* iFlx_2, double* iFlx_3, double* iFlx_4, double* iFlx_5,
          double* bound_1_l, double* bound_2_l, double* bound_3_l, double* bound_4_l, double* bound_5_l,
          double* bound_1_r, double* bound_2_r, double* bound_3_r, double* bound_4_r, double* bound_5_r,
@@ -195,20 +231,20 @@ extern "C"   // ensure function name to be exactly "vadd"
       else tid_adj = t_j + t_i*blockDim.x*gridDim.x + (t_k-1)*blockDim.x*gridDim.x*blockDim.y*gridDim.y;
     }
     //Read adjacent and center conservatives
-    rho_l = cnsv_1[ tid_adj ];
-    rho_c = cnsv_1[ tid ];
+    rho_l = cnsv[ 0*nCells + tid_adj ];
+    rho_c = cnsv[ 0*nCells + tid ];
 
-    vx_l = cnsv_2[ tid_adj ] / rho_l;
-    vx_c = cnsv_2[ tid ] / rho_c;
+    vx_l = cnsv[ 1*nCells + tid_adj ] / rho_l;
+    vx_c = cnsv[ 1*nCells + tid ] / rho_c;
 
-    vy_l = cnsv_3[ tid_adj ] / rho_l;
-    vy_c = cnsv_3[ tid ] / rho_c;
+    vy_l = cnsv[ 2*nCells + tid_adj ] / rho_l;
+    vy_c = cnsv[ 2*nCells + tid ] / rho_c;
 
-    vz_l = cnsv_4[ tid_adj ] / rho_l;
-    vz_c = cnsv_4[ tid ] / rho_c;
+    vz_l = cnsv[ 3*nCells + tid_adj ] / rho_l;
+    vz_c = cnsv[ 3*nCells + tid ] / rho_c;
 
-    E_l = cnsv_5[ tid_adj ];
-    E_c = cnsv_5[ tid ];
+    E_l = cnsv[ 4*nCells + tid_adj ];
+    E_c = cnsv[ 4*nCells + tid ];
 
     //Load and apply boundery conditions
     if ( coord == 1 ){
@@ -344,9 +380,9 @@ extern "C"   // ensure function name to be exactly "vadd"
   ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
   ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-	__global__ void getInterFlux_hll( const int coord, const double dt,  const double gamma,
+	__global__ void getInterFlux_hll( const int coord, const int nCells, const double dt,  const double gamma,
 				 const double dx, const double dy, const double dz,
-				 double* cnsv_adv_1, double* cnsv_adv_2, double* cnsv_adv_3, double* cnsv_adv_4, double* cnsv_adv_5,
+				 double *cnsv_adv,
 				 double* iFlx_1, double* iFlx_2, double* iFlx_3, double* iFlx_4, double* iFlx_5,
 				 double* iFlx_1_bnd, double* iFlx_2_bnd, double* iFlx_3_bnd, double* iFlx_4_bnd, double* iFlx_5_bnd ){
 				//  double* gForceX, double* gForceY, double* gForceZ, double* gravWork ){
@@ -463,37 +499,35 @@ extern "C"   // ensure function name to be exactly "vadd"
 		// cnsv_5[ tid ] = cnsv_5[ tid ] - delta*( iFlx5_r - iFlx5_l ) + dt*gravWork[tid]*50;
 
 		if ( coord == 1 ){
-			cnsv_adv_1[ tid ] = -delta*( iFlx1_r - iFlx1_l );
-			cnsv_adv_2[ tid ] = -delta*( iFlx2_r - iFlx2_l );
-			cnsv_adv_3[ tid ] = -delta*( iFlx3_r - iFlx3_l );
-			cnsv_adv_4[ tid ] = -delta*( iFlx4_r - iFlx4_l );
-			cnsv_adv_5[ tid ] = -delta*( iFlx5_r - iFlx5_l );
+			cnsv_adv[0*nCells +  tid ] = -delta*( iFlx1_r - iFlx1_l );
+			cnsv_adv[1*nCells +  tid ] = -delta*( iFlx2_r - iFlx2_l );
+			cnsv_adv[2*nCells +  tid ] = -delta*( iFlx3_r - iFlx3_l );
+			cnsv_adv[3*nCells +  tid ] = -delta*( iFlx4_r - iFlx4_l );
+			cnsv_adv[4*nCells +  tid ] = -delta*( iFlx5_r - iFlx5_l );
 		}
 		else{
-			cnsv_adv_1[ tid ] = cnsv_adv_1[ tid ] - delta*( iFlx1_r - iFlx1_l );
-			cnsv_adv_2[ tid ] = cnsv_adv_2[ tid ] - delta*( iFlx2_r - iFlx2_l );
-			cnsv_adv_3[ tid ] = cnsv_adv_3[ tid ] - delta*( iFlx3_r - iFlx3_l );
-			cnsv_adv_4[ tid ] = cnsv_adv_4[ tid ] - delta*( iFlx4_r - iFlx4_l );
-			cnsv_adv_5[ tid ] = cnsv_adv_5[ tid ] - delta*( iFlx5_r - iFlx5_l );
+			cnsv_adv[0*nCells +  tid ] = cnsv_adv[0*nCells +  tid ] - delta*( iFlx1_r - iFlx1_l );
+			cnsv_adv[1*nCells +  tid ] = cnsv_adv[1*nCells +  tid ] - delta*( iFlx2_r - iFlx2_l );
+			cnsv_adv[2*nCells +  tid ] = cnsv_adv[2*nCells +  tid ] - delta*( iFlx3_r - iFlx3_l );
+			cnsv_adv[3*nCells +  tid ] = cnsv_adv[3*nCells +  tid ] - delta*( iFlx4_r - iFlx4_l );
+			cnsv_adv[4*nCells +  tid ] = cnsv_adv[4*nCells +  tid ] - delta*( iFlx5_r - iFlx5_l );
 		}
 	}
 
 	///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 	///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-	__global__ void addDtoD(
-			double *dst_1, double *dst_2, double *dst_3, double *dst_4, double *dst_5,
-			double *sum_1, double *sum_2, double *sum_3, double *sum_4, double *sum_5 ){
+	__global__ void addDtoD( const int nCells,
+			double *dst, double *sum ){
 		int t_j = blockIdx.x*blockDim.x + threadIdx.x;
 		int t_i = blockIdx.y*blockDim.y + threadIdx.y;
 		int t_k = blockIdx.z*blockDim.z + threadIdx.z;
 		int tid = t_j + t_i*blockDim.x*gridDim.x + t_k*blockDim.x*gridDim.x*blockDim.y*gridDim.y;
 
-		dst_1[tid] = dst_1[tid] + sum_1[tid];
-		dst_2[tid] = dst_2[tid] + sum_2[tid];
-		dst_3[tid] = dst_3[tid] + sum_3[tid];
-		dst_4[tid] = dst_4[tid] + sum_4[tid];
-		dst_5[tid] = dst_5[tid] + sum_5[tid];
+		int i;
+		for( i=0; i<5; i++){
+			dst[i*nCells + tid] = dst[i*nCells + tid] + sum[i*nCells + tid];
+		}
 	}
 
 }//End of extern 'C'
