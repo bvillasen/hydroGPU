@@ -62,8 +62,8 @@ yPoints = Y[0,:,0]
 zPoints = Z[0,0,:]
 R = np.sqrt( X*X + Y*Y + Z*Z )
 sphereR = 0.25
-sphereOffCenter = 0.05
-sphere = np.sqrt( (X)*(X) + Y*Y + Z*Z ) < 0.2
+sphereOffCenter = 0.25
+sphere = np.sqrt( (X- sphereOffCenter)**2 + Y*Y + Z*Z ) < 0.2
 sphere_left  = ( np.sqrt( (X+sphereOffCenter)*(X+sphereOffCenter) + Y*Y + Z*Z ) < sphereR )
 sphere_right = ( np.sqrt( (X-sphereOffCenter)*(X-sphereOffCenter) + Y*Y + Z*Z ) < sphereR )
 spheres = sphere_right + sphere_left
@@ -137,42 +137,27 @@ reduction_max_kernel = cudaCode.get_function('reduction_max_kernel')
 ###################################################
 def timeStepHydro():
   setBounderies_knl( np.int32(nCells), cnsv_d,
-      bound_1_l_d, bound_1_r_d, bound_1_d_d, bound_1_u_d, bound_1_b_d, bound_1_t_d,
-      bound_2_l_d, bound_2_r_d, bound_2_d_d, bound_2_u_d, bound_2_b_d, bound_2_t_d,
-      bound_3_l_d, bound_3_r_d, bound_3_d_d, bound_3_u_d, bound_3_b_d, bound_3_t_d,
-      bound_4_l_d, bound_4_r_d, bound_4_d_d, bound_4_u_d, bound_4_b_d, bound_4_t_d,
-      bound_5_l_d, bound_5_r_d, bound_5_d_d, bound_5_u_d, bound_5_b_d, bound_5_t_d, grid=grid3D, block=block3D  )
+      bound_l_d, bound_r_d, bound_d_d, bound_u_d, bound_b_d, bound_t_d, grid=grid3D, block=block3D  )
 
   for coord in [ 1, 2, 3]:
     if coord == 1:
-      bound_1_l_temp, bound_2_l_temp, bound_3_l_temp, bound_4_l_temp, bound_5_l_temp = bound_1_l_d, bound_2_l_d, bound_3_l_d, bound_4_l_d, bound_5_l_d
-      bound_1_r_temp, bound_2_r_temp, bound_3_r_temp, bound_4_r_temp, bound_5_r_temp = bound_1_r_d, bound_2_r_d, bound_3_r_d, bound_4_r_d, bound_5_r_d
-      iFlx_1_bound_temp, iFlx_2_bound_temp, iFlx_3_bound_temp, iFlx_4_bound_temp, iFlx_5_bound_temp = iFlx1_bnd_r_d, iFlx2_bnd_r_d, iFlx3_bnd_r_d, iFlx4_bnd_r_d, iFlx5_bnd_r_d
+      bound_l_temp, bound_r_temp = bound_l_d, bound_r_d
+      iFlx_bound_temp = iFlx_bnd_r_d
     if coord == 2:
-      bound_1_l_temp, bound_2_l_temp, bound_3_l_temp, bound_4_l_temp, bound_5_l_temp = bound_1_d_d, bound_2_d_d, bound_3_d_d, bound_4_d_d, bound_5_d_d
-      bound_1_r_temp, bound_2_r_temp, bound_3_r_temp, bound_4_r_temp, bound_5_r_temp = bound_1_u_d, bound_2_u_d, bound_3_u_d, bound_4_u_d, bound_5_u_d
-      iFlx_1_bound_temp, iFlx_2_bound_temp, iFlx_3_bound_temp, iFlx_4_bound_temp, iFlx_5_bound_temp = iFlx1_bnd_u_d, iFlx2_bnd_u_d, iFlx3_bnd_u_d, iFlx4_bnd_u_d, iFlx5_bnd_u_d
+      bound_l_temp, bound_r_temp = bound_d_d, bound_u_d
+      iFlx_bound_temp = iFlx_bnd_u_d
     if coord == 3:
-      bound_1_l_temp, bound_2_l_temp, bound_3_l_temp, bound_4_l_temp, bound_5_l_temp = bound_1_b_d, bound_2_b_d, bound_3_b_d, bound_4_b_d, bound_5_b_d
-      bound_1_r_temp, bound_2_r_temp, bound_3_r_temp, bound_4_r_temp, bound_5_r_temp = bound_1_t_d, bound_2_t_d, bound_3_t_d, bound_4_t_d, bound_5_t_d
-      iFlx_1_bound_temp, iFlx_2_bound_temp, iFlx_3_bound_temp, iFlx_4_bound_temp, iFlx_5_bound_temp = iFlx1_bnd_t_d, iFlx2_bnd_t_d, iFlx3_bnd_t_d, iFlx4_bnd_t_d, iFlx5_bnd_t_d
-
+      bound_l_temp, bound_r_temp = bound_b_d, bound_t_d
+      iFlx_bound_temp = iFlx_bnd_t_d
     setInterFlux_hll_knl( np.int32( coord ), np.int32(nCells), gamma, dx, dy, dz,
-      cnsv_d,
-      iFlx1_d, iFlx2_d, iFlx3_d, iFlx4_d, iFlx5_d,
-      bound_1_l_temp, bound_2_l_temp, bound_3_l_temp, bound_4_l_temp, bound_5_l_temp,
-      bound_1_r_temp, bound_2_r_temp, bound_3_r_temp, bound_4_r_temp, bound_5_r_temp,
-      iFlx_1_bound_temp, iFlx_2_bound_temp, iFlx_3_bound_temp, iFlx_4_bound_temp, iFlx_5_bound_temp,
-      times_d,  grid=grid3D, block=block3D )
+      cnsv_d, iFlx_d,
+      bound_l_temp, bound_r_temp,
+      iFlx_bound_temp, times_d,  grid=grid3D, block=block3D )
     if coord == 1:
       dt = c0 * reduction_min( times_d, prePartialSum_d, partialSum_h, partialSum_d )
-      # print dt
       # dt = c0 * gpuarray.min( times_d ).get()
-      # print dt
     getInterFlux_hll_knl( np.int32( coord ),  np.int32(nCells), cudaPre(dt), gamma, dx, dy, dz,
-        cnsv_adv_d,
-        iFlx1_d, iFlx2_d, iFlx3_d, iFlx4_d, iFlx5_d,
-        iFlx_1_bound_temp, iFlx_2_bound_temp, iFlx_3_bound_temp, iFlx_4_bound_temp, iFlx_5_bound_temp, grid=grid3D, block=block3D )
+        cnsv_adv_d, iFlx_d, iFlx_bound_temp, grid=grid3D, block=block3D )
   addDtoD_knl( np.int32(nCells), cnsv_d, cnsv_adv_d, grid=grid3D, block=block3D)
 
 
@@ -228,43 +213,31 @@ cnsv5_h = rho*v2/2. + p/(gamma-1)
 cnsv_h = np.array([ cnsv1_h, cnsv2_h, cnsv3_h, cnsv4_h, cnsv5_h ])
 #Arrays for bounderies
 ZEROS_HD, ZEROS_WD, ZEROS_WH = np.zeros( [ nHeight, nDepth ], dtype=cudaPre ), np.zeros( [ nWidth, nDepth ], dtype=cudaPre ), np.zeros( [ nWidth, nHeight ], dtype=cudaPre )
+ZEROS_HD_all, ZEROS_WD_all, ZEROS_WH_all = np.zeros( [ nFields, nHeight, nDepth ], dtype=cudaPre ), np.zeros( [ nFields, nWidth, nDepth ], dtype=cudaPre ), np.zeros( [ nFields, nWidth, nHeight ], dtype=cudaPre )
 bound_l_h = np.zeros_like( ZEROS_HD )
 bound_r_h = np.zeros_like( ZEROS_HD )
 bound_d_h = np.zeros_like( ZEROS_WD )
 bound_u_h = np.zeros_like( ZEROS_WD )
 bound_b_h = np.zeros_like( ZEROS_WH )
 bound_t_h = np.zeros_like( ZEROS_WH )
+bound_l_h_all = np.zeros_like( ZEROS_HD_all )
+bound_r_h_all = np.zeros_like( ZEROS_HD_all )
+bound_d_h_all = np.zeros_like( ZEROS_WD_all )
+bound_u_h_all = np.zeros_like( ZEROS_WD_all )
+bound_b_h_all = np.zeros_like( ZEROS_WH_all )
+bound_t_h_all = np.zeros_like( ZEROS_WH_all )
 #####################################################
 #Initialize device global data
 cnsv_d = gpuarray.to_gpu( cnsv_h )
 cnsv_adv_d = gpuarray.to_gpu( cnsv_h )
 ZEROS = np.zeros( X.shape, dtype=cudaPre )
+ZEROS_all = np.zeros( [nFields, nDepth, nHeight, nWidth], dtype=cudaPre )
 times_d = gpuarray.to_gpu( np.zeros( X.shape, dtype=cudaPre ) )
-iFlx1_d = gpuarray.to_gpu( ZEROS )
-iFlx2_d = gpuarray.to_gpu( ZEROS )
-iFlx3_d = gpuarray.to_gpu( ZEROS )
-iFlx4_d = gpuarray.to_gpu( ZEROS )
-iFlx5_d = gpuarray.to_gpu( ZEROS )
-iFlx1_bnd_r_d, iFlx1_bnd_u_d, iFlx1_bnd_t_d = gpuarray.to_gpu( ZEROS_HD ), gpuarray.to_gpu( ZEROS_WD ), gpuarray.to_gpu( ZEROS_WH )
-iFlx2_bnd_r_d, iFlx2_bnd_u_d, iFlx2_bnd_t_d = gpuarray.to_gpu( ZEROS_HD ), gpuarray.to_gpu( ZEROS_WD ), gpuarray.to_gpu( ZEROS_WH )
-iFlx3_bnd_r_d, iFlx3_bnd_u_d, iFlx3_bnd_t_d = gpuarray.to_gpu( ZEROS_HD ), gpuarray.to_gpu( ZEROS_WD ), gpuarray.to_gpu( ZEROS_WH )
-iFlx4_bnd_r_d, iFlx4_bnd_u_d, iFlx4_bnd_t_d = gpuarray.to_gpu( ZEROS_HD ), gpuarray.to_gpu( ZEROS_WD ), gpuarray.to_gpu( ZEROS_WH )
-iFlx5_bnd_r_d, iFlx5_bnd_u_d, iFlx5_bnd_t_d = gpuarray.to_gpu( ZEROS_HD ), gpuarray.to_gpu( ZEROS_WD ), gpuarray.to_gpu( ZEROS_WH )
-bound_1_l_d, bound_1_r_d = gpuarray.to_gpu( bound_l_h ), gpuarray.to_gpu( bound_r_h )
-bound_1_d_d, bound_1_u_d = gpuarray.to_gpu( bound_d_h ), gpuarray.to_gpu( bound_u_h )
-bound_1_b_d, bound_1_t_d = gpuarray.to_gpu( bound_b_h ), gpuarray.to_gpu( bound_t_h )
-bound_2_l_d, bound_2_r_d = gpuarray.to_gpu( bound_l_h ), gpuarray.to_gpu( bound_r_h )
-bound_2_d_d, bound_2_u_d = gpuarray.to_gpu( bound_d_h ), gpuarray.to_gpu( bound_u_h )
-bound_2_b_d, bound_2_t_d = gpuarray.to_gpu( bound_b_h ), gpuarray.to_gpu( bound_t_h )
-bound_3_l_d, bound_3_r_d = gpuarray.to_gpu( bound_l_h ), gpuarray.to_gpu( bound_r_h )
-bound_3_d_d, bound_3_u_d = gpuarray.to_gpu( bound_d_h ), gpuarray.to_gpu( bound_u_h )
-bound_3_b_d, bound_3_t_d = gpuarray.to_gpu( bound_b_h ), gpuarray.to_gpu( bound_t_h )
-bound_4_l_d, bound_4_r_d = gpuarray.to_gpu( bound_l_h ), gpuarray.to_gpu( bound_r_h )
-bound_4_d_d, bound_4_u_d = gpuarray.to_gpu( bound_d_h ), gpuarray.to_gpu( bound_u_h )
-bound_4_b_d, bound_4_t_d = gpuarray.to_gpu( bound_b_h ), gpuarray.to_gpu( bound_t_h )
-bound_5_l_d, bound_5_r_d = gpuarray.to_gpu( bound_l_h ), gpuarray.to_gpu( bound_r_h )
-bound_5_d_d, bound_5_u_d = gpuarray.to_gpu( bound_d_h ), gpuarray.to_gpu( bound_u_h )
-bound_5_b_d, bound_5_t_d = gpuarray.to_gpu( bound_b_h ), gpuarray.to_gpu( bound_t_h )
+iFlx_d = gpuarray.to_gpu( ZEROS_all )
+bound_l_d, bound_r_d = gpuarray.to_gpu( bound_l_h_all ), gpuarray.to_gpu( bound_r_h_all )
+bound_d_d, bound_u_d = gpuarray.to_gpu( bound_d_h_all ), gpuarray.to_gpu( bound_u_h_all )
+bound_b_d, bound_t_d = gpuarray.to_gpu( bound_b_h_all ), gpuarray.to_gpu( bound_t_h_all )
+iFlx_bnd_r_d, iFlx_bnd_u_d, iFlx_bnd_t_d = gpuarray.to_gpu( ZEROS_HD_all ), gpuarray.to_gpu( ZEROS_WD_all ), gpuarray.to_gpu( ZEROS_WH_all )
 #Arrays for reductions
 blockSize_reduc = 512
 gridSize_reduc = nCells / blockSize_reduc  / 2
