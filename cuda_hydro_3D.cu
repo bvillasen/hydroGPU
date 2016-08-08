@@ -295,7 +295,7 @@ extern "C"   // ensure functions name to be exactly the same as below
 
     else if ( coord == 2 ){
       s_l = min( vy_l - cs_l, vy_c - cs_c );
-      s_c = max( vy_l + cs_l, vy_c + cs_c );
+      s_c = max( vy_l + cs_l, vy_c + cs_c ); 
     }
 
     else if ( coord == 3 ){

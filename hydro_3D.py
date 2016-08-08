@@ -146,7 +146,7 @@ def timeStepHydro():
     if coord == 2:
       bound_l_temp, bound_r_temp = bound_d_d, bound_u_d
       iFlx_bound_temp = iFlx_bnd_u_d
-    if coord == 3:
+    if coord == 3: 
       bound_l_temp, bound_r_temp = bound_b_d, bound_t_d
       iFlx_bound_temp = iFlx_bnd_t_d
     setInterFlux_hll_knl( np.int32( coord ), np.int32(nCells), gamma, dx, dy, dz,
