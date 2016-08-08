@@ -299,7 +299,7 @@ extern "C"   // ensure functions name to be exactly the same as below
     }
 
     else if ( coord == 3 ){
-      s_l = min( vz_l - cs_l, vz_c - cs_c );
+      s_l = min( vz_l - cs_l, vz_c - cs_c ); 
       s_c = max( vz_l + cs_l, vz_c + cs_c );
     }
 
