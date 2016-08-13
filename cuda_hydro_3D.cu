@@ -4,521 +4,761 @@
 #define N_H N_HEIGHT
 #define N_D N_DEPTH
 
-extern "C"   // ensure functions name to be exactly the same as below
-{
-	__global__ void convertToUCHAR( const int field, const int nCells, cudaP normaliztion, cudaP *values, unsigned char *psiUCHAR ){
-		int tid = blockIdx.x*blockDim.x + threadIdx.x;
-		psiUCHAR[tid] = (unsigned char) ( -255*( values[field*nCells + tid]*normaliztion -1 ));
+#include "cuda_extras.cu"
+#include "cuda_bounderies.cu"
+
+
+extern "C"{   // ensure functions name to be exactly the same as below
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+__global__ void setTimes( const int nCells,
+			const double gamma, const double dx, const double dy, const double dz,
+			double * cnsv, double *times ){
+  int t_j = blockIdx.x*blockDim.x + threadIdx.x;
+  int t_i = blockIdx.y*blockDim.y + threadIdx.y;
+  int t_k = blockIdx.z*blockDim.z + threadIdx.z;
+  int tid = t_j + t_i*blockDim.x*gridDim.x + t_k*blockDim.x*gridDim.x*blockDim.y*gridDim.y;
+
+	double rho, vx, vy, vz, E;
+  rho = cnsv[ 0*nCells + tid ];
+	vx  = cnsv[ 1*nCells + tid ] / rho;
+	vy  = cnsv[ 2*nCells + tid ] / rho;
+	vz  = cnsv[ 3*nCells + tid ] / rho;
+	E   = cnsv[ 4*nCells + tid ] / rho;
+
+	double p, cs, v2;
+	v2 = vx*vx + vy*vy + vz*vz;
+	p  = ( E - rho*v2/2 ) * (gamma-1);
+	cs = sqrt( p * gamma / rho );
+
+	//Use v2 to save time minimum
+	v2 = dx / ( abs( vx ) + cs );
+	v2 = min( v2, dy / ( abs( vy ) + cs ) );
+	v2 = min( v2, dz / ( abs( vz ) + cs ) );
+	times[ tid ] = v2;
+}
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+__global__ void reconstruct_PCM( const int nCells, const int nCells_b2,
+			double *cnsv, double *recons_l, double *recons_r ){
+  int t_j = blockIdx.x*blockDim.x + threadIdx.x;
+  int t_i = blockIdx.y*blockDim.y + threadIdx.y;
+  int t_k = blockIdx.z*blockDim.z + threadIdx.z;
+  int tid = t_j + t_i*blockDim.x*gridDim.x + t_k*blockDim.x*gridDim.x*blockDim.y*gridDim.y;
+
+	double rho_c, mx_c, my_c, mz_c, E_c;
+
+	//Load conserved values
+  rho_c = cnsv[ 0*nCells + tid ];
+	mx_c  = cnsv[ 1*nCells + tid ];
+	my_c  = cnsv[ 2*nCells + tid ];
+	mz_c  = cnsv[ 3*nCells + tid ];
+	E_c   = cnsv[ 4*nCells + tid ];
+
+	//Write Reconstructed left values
+	t_j += 1;
+	t_i += 1;
+	t_k += 1;
+	tid = t_j + t_i*(N_W+2) + t_k*(N_W+2)*(N_H+2);
+
+	recons_l[ 0*nCells_b2 + tid ] = rho_c;
+	recons_l[ 1*nCells_b2 + tid ] = mx_c;
+	recons_l[ 2*nCells_b2 + tid ] = my_c;
+	recons_l[ 3*nCells_b2 + tid ] = mz_c;
+	recons_l[ 4*nCells_b2 + tid ] = E_c;
+
+	//Write Reconstructed right values
+	recons_r[ 0*nCells_b2 + tid ] = rho_c;
+	recons_r[ 1*nCells_b2 + tid ] = mx_c;
+	recons_r[ 2*nCells_b2 + tid ] = my_c;
+	recons_r[ 3*nCells_b2 + tid ] = mz_c;
+	recons_r[ 4*nCells_b2 + tid ] = E_c;
+
+	// Load and write bounderies for reconstructed values
+	bool boundThread = false;
+	if ( t_j==1 || t_i==1 || t_k==1 ) boundThread = true;
+	if ( t_j==N_W || t_i==N_H || t_k==N_D ) boundThread = true;
+	if ( !boundThread ) return;
+
+	if ( t_j==1 ){
+		tid = (t_j-1) + t_i*(N_W+2) + t_k*(N_W+2)*(N_H+2);
+		recons_r[ 0*nCells_b2 + tid ] = rho_c;
+		recons_r[ 1*nCells_b2 + tid ] = mx_c;
+		recons_r[ 2*nCells_b2 + tid ] = my_c;
+		recons_r[ 3*nCells_b2 + tid ] = mz_c;
+		recons_r[ 4*nCells_b2 + tid ] = E_c;
 	}
-	///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-	///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-	__global__ void reduction_max_kernel( double *input, double *output ){
-		__shared__ double sh_data[512];
 
-		unsigned int tid = threadIdx.x;
-		unsigned int i   = blockIdx.x * blockDim.x  + threadIdx.x;
-		sh_data[tid] = max( input[i], input[i + blockDim.x*gridDim.x ] ) ;
-		__syncthreads();
-
-		for( unsigned int s = blockDim.x/2; s>0; s >>= 1){
-			if ( tid < s ) sh_data[tid] = max( sh_data[tid], sh_data[tid+s] );
-			__syncthreads();
-		}
-
-		if ( tid == 0 ) output[ blockIdx.x ] = sh_data[0];
+	if ( t_i==1 ){
+		tid = t_j + (t_i-1)*(N_W+2) + t_k*(N_W+2)*(N_H+2);
+		recons_r[ 0*nCells_b2 + tid ] = rho_c;
+		recons_r[ 1*nCells_b2 + tid ] = mx_c;
+		recons_r[ 2*nCells_b2 + tid ] = my_c;
+		recons_r[ 3*nCells_b2 + tid ] = mz_c;
+		recons_r[ 4*nCells_b2 + tid ] = E_c;
 	}
-  ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-  ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-	__global__ void reduction_min_kernel( double *input, double *output ){
-		__shared__ double sh_data[512];
-
-		unsigned int tid = threadIdx.x;
-		unsigned int i   = blockIdx.x * blockDim.x  + threadIdx.x;
-		sh_data[tid] = min( input[i], input[i + blockDim.x*gridDim.x ] ) ;
-		__syncthreads();
-
-		for( unsigned int s = blockDim.x/2; s>0; s >>= 1){
-			if ( tid < s ) sh_data[tid] = min( sh_data[tid], sh_data[tid+s] );
-			__syncthreads();
-		}
-
-		if ( tid == 0 ) output[ blockIdx.x ] = sh_data[0];
+	if ( t_k==1 ){
+		tid = t_j + t_i*(N_W+2) + (t_k-1)*(N_W+2)*(N_H+2);
+		recons_r[ 0*nCells_b2 + tid ] = rho_c;
+		recons_r[ 1*nCells_b2 + tid ] = mx_c;
+		recons_r[ 2*nCells_b2 + tid ] = my_c;
+		recons_r[ 3*nCells_b2 + tid ] = mz_c;
+		recons_r[ 4*nCells_b2 + tid ] = E_c;
 	}
-  ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-  ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-	__device__ void writeBound(  const int boundAxis, const int nCells, double *cnsv, double *bound,
-                  const int t_j, const int t_i, const int t_k, const int tid ){
-    int boundId, stride;
-    if ( boundAxis == 1 ){    //X BOUNDERIES
-			boundId = t_i + t_k*N_H;
-			stride = N_H*N_D;
-		}
-    if ( boundAxis == 2 ) {   //Y BOUNDERIES
-			boundId = t_j + t_k*N_W;
-			stride = N_W*N_D;
-		}
-    if ( boundAxis == 3 ) {  //Z BOUNDERIES
-			boundId = t_j + t_i*N_W;
-			stride = N_W*N_H;
-		}
-    bound[0*stride + boundId] = cnsv[0*nCells + tid];
-    bound[1*stride + boundId] = cnsv[1*nCells + tid];
-    bound[2*stride + boundId] = cnsv[2*nCells + tid];
-    bound[3*stride + boundId] = cnsv[3*nCells + tid];
-    bound[4*stride + boundId] = cnsv[4*nCells + tid];
+
+	if ( t_j==N_W ){
+		tid = (t_j+1) + t_i*(N_W+2) + t_k*(N_W+2)*(N_H+2);
+		recons_l[ 0*nCells_b2 + tid ] = rho_c;
+		recons_l[ 1*nCells_b2 + tid ] = mx_c;
+		recons_l[ 2*nCells_b2 + tid ] = my_c;
+		recons_l[ 3*nCells_b2 + tid ] = mz_c;
+		recons_l[ 4*nCells_b2 + tid ] = E_c;
+	}
+
+	if ( t_i==N_H ){
+		tid = t_j + (t_i+1)*(N_W+2) + t_k*(N_W+2)*(N_H+2);
+		recons_l[ 0*nCells_b2 + tid ] = rho_c;
+		recons_l[ 1*nCells_b2 + tid ] = mx_c;
+		recons_l[ 2*nCells_b2 + tid ] = my_c;
+		recons_l[ 3*nCells_b2 + tid ] = mz_c;
+		recons_l[ 4*nCells_b2 + tid ] = E_c;
+	}
+
+	if ( t_k==N_D ){
+		tid = t_j + t_i*(N_W+2) + (t_k+1)*(N_W+2)*(N_H+2);
+		recons_l[ 0*nCells_b2 + tid ] = rho_c;
+		recons_l[ 1*nCells_b2 + tid ] = mx_c;
+		recons_l[ 2*nCells_b2 + tid ] = my_c;
+		recons_l[ 3*nCells_b2 + tid ] = mz_c;
+		recons_l[ 4*nCells_b2 + tid ] = E_c;
+	}
+}
+__device__ double hll_interFlux( double val_l, double val_r, double F_l, double F_r, double s_l, double s_r ){
+  if ( s_l > 0 ) return F_l;
+  if ( s_r < 0 ) return F_r;
+  return ( s_r*F_l - s_l*F_r + s_l*s_r*( val_r - val_l ) ) / ( s_r - s_l );
+}
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+__device__ void writeInterFlux(const int coord, const int writeStride, int tid,
+				double rho_l, double rho_r, double vx_l, double vx_r, double vy_l, double vy_r, double vz_l, double vz_r, double E_l, double E_r,
+				double p_l, double p_r, double s_l, double s_r,
+				double *iFlx ){
+
+	// Adjacent fluxes from left and center cell
+	double F_l, F_r;
+
+	//iFlx rho
+	if ( coord == 1 ){
+		F_l = rho_l * vx_l;
+		F_r = rho_r * vx_r;
+	}
+	else if ( coord == 2 ){
+		F_l = rho_l * vy_l;
+		F_r = rho_r * vy_r;
+	}
+	else if ( coord == 3 ){
+		F_l = rho_l * vz_l;
+		F_r = rho_r * vz_r;
+	}
+	iFlx[0*writeStride + tid] = hll_interFlux( rho_l, rho_r, F_l, F_r, s_l, s_r );
+
+	//iFlx rho * vx
+	if ( coord == 1 ){
+		F_l = rho_l * vx_l * vx_l + p_l;
+		F_r = rho_r * vx_r * vx_r + p_r;
+	}
+	else if ( coord == 2 ){
+		F_l = rho_l * vx_l * vy_l;
+		F_r = rho_r * vx_r * vy_r;
+	}
+	else if ( coord == 3 ){
+		F_l = rho_l * vx_l * vz_l;
+		F_r = rho_r * vx_r * vz_r;
+	}
+	iFlx[1*writeStride + tid] = hll_interFlux( rho_l*vx_l, rho_r*vx_r, F_l, F_r, s_l, s_r );
+
+	//iFlx rho * vy
+	if ( coord == 1 ){
+		F_l = rho_l * vy_l * vx_l ;
+		F_r = rho_r * vy_r * vx_r ;
+	}
+	else if ( coord == 2 ){
+		F_l = rho_l * vy_l * vy_l + p_l;
+		F_r = rho_r * vy_r * vy_r + p_r;
+	}
+	else if ( coord == 3 ){
+		F_l = rho_l * vy_l * vz_l;
+		F_r = rho_r * vy_r * vz_r;
+	}
+	iFlx[2*writeStride + tid] = hll_interFlux( rho_l*vy_l, rho_r*vy_r, F_l, F_r, s_l, s_r );
+
+	//iFlx rho * vz
+	if ( coord == 1 ){
+		F_l = rho_l * vz_l * vx_l ;
+		F_r = rho_r * vz_r * vx_r ;
+	}
+	else if ( coord == 2 ){
+		F_l = rho_l * vz_l * vy_l ;
+		F_r = rho_r * vz_r * vy_r ;
+	}
+	else if ( coord == 3 ){
+		F_l = rho_l * vz_l * vz_l + p_l ;
+		F_r = rho_r * vz_r * vz_r + p_r ;
+	}
+	iFlx[3*writeStride + tid] = hll_interFlux( rho_l*vz_l, rho_r*vz_r, F_l, F_r, s_l, s_r );
+
+	//iFlx E
+	if ( coord == 1 ){
+		F_l = vx_l * ( E_l + p_l ) ;
+		F_r = vx_r * ( E_r + p_r ) ;
+	}
+	else if ( coord == 2 ){
+		F_l = vy_l * ( E_l + p_l ) ;
+		F_r = vy_r * ( E_r + p_r ) ;
+	}
+	else if ( coord == 3 ){
+		F_l = vz_l * ( E_l + p_l ) ;
+		F_r = vz_r * ( E_r + p_r ) ;
+	}
+	iFlx[4*writeStride + tid] = hll_interFlux( E_l, E_r, F_l, F_r, s_l, s_r );
+}
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+__global__ void solveRiemann( const int coord, const int nCells, const int nCells_b1, const int nCells_b2,
+			const double gamma, const double dx, const double dy, const double dz,
+			double *recons_l, double *recons_r, double *iFlx ){
+  int t_j = blockIdx.x*blockDim.x + threadIdx.x;
+  int t_i = blockIdx.y*blockDim.y + threadIdx.y;
+  int t_k = blockIdx.z*blockDim.z + threadIdx.z;
+	int tid = t_j + t_i*blockDim.x*gridDim.x + t_k*blockDim.x*gridDim.x*blockDim.y*gridDim.y;
+
+	//Solve Riemann problem for left inter-cell;
+	//this is done for the left side of the center cell
+	//and the right side of the left cell.
+
+	int tid_p, tid_m;
+	t_j += 1;
+	t_i += 1;
+	t_k += 1;
+	tid_p = t_j + t_i*(N_W+2) + t_k*(N_W+2)*(N_H+2);
+
+	double rho_p, vx_p, vy_p, vz_p, E_p, p_p;
+	double rho_m, vx_m, vy_m, vz_m, E_m, p_m;
+	//Right side of inter-cell
+	rho_p = recons_l[ 0*nCells_b2 + tid_p ];
+	vx_p  = recons_l[ 1*nCells_b2 + tid_p ] / rho_p;
+	vy_p  = recons_l[ 2*nCells_b2 + tid_p ] / rho_p;
+	vz_p  = recons_l[ 3*nCells_b2 + tid_p ] / rho_p;
+	E_p   = recons_l[ 4*nCells_b2 + tid_p ];
+	//Left side of inter-cell
+	if ( coord == 1 ) tid_m = (t_j-1) + t_i*(N_W+2) + t_k*(N_W+2)*(N_H+2);
+	if ( coord == 2 ) tid_m = t_j + (t_i-1)*(N_W+2) + t_k*(N_W+2)*(N_H+2);
+	if ( coord == 3 ) tid_m = t_j + t_i*(N_W+2) + (t_k-1)*(N_W+2)*(N_H+2);
+	rho_m = recons_r[ 0*nCells_b2 + tid_m ];
+	vx_m  = recons_r[ 1*nCells_b2 + tid_m ] / rho_m;
+	vy_m  = recons_r[ 2*nCells_b2 + tid_m ] / rho_m;
+	vz_m  = recons_r[ 3*nCells_b2 + tid_m ] / rho_m;
+	E_m   = recons_r[ 4*nCells_b2 + tid_m ];
+
+	double v2;
+	v2  = vx_m*vx_m + vy_m*vy_m + vz_m*vz_m;
+	p_m = ( E_m - 0.5*rho_m*v2 ) * (gamma-1);
+
+	v2  = vx_p*vx_p + vy_p*vy_p + vz_p*vz_p;
+	p_p = ( E_p - 0.5*rho_p*v2 ) * (gamma-1);
+
+	double cs_m, cs_p, s_m, s_p;
+  cs_m = sqrt( p_m * gamma / rho_m );
+  cs_p = sqrt( p_p * gamma / rho_p );
+
+	if ( coord == 1 ){
+    s_m = min( vx_m - cs_m, vx_p - cs_p );
+    s_p = max( vx_m + cs_m, vx_p + cs_p );
+  }
+  if ( coord == 2 ){
+    s_m = min( vy_m - cs_m, vy_p - cs_p );
+    s_p = max( vy_m + cs_m, vy_p + cs_p );
+  }
+  if ( coord == 3 ){
+    s_m = min( vz_m - cs_m, vz_p - cs_p );
+    s_p = max( vz_m + cs_m, vz_p + cs_p );
   }
 
-  __global__ void setBounderies( const int nCells, double *cnsv,
-				 double* bound_l, double* bound_r, double* bound_d, double* bound_u, double* bound_b, double *bound_t ){
-    int t_j = blockIdx.x*blockDim.x + threadIdx.x;
-    int t_i = blockIdx.y*blockDim.y + threadIdx.y;
-    int t_k = blockIdx.z*blockDim.z + threadIdx.z;
-    int tid = t_j + t_i*blockDim.x*gridDim.x + t_k*blockDim.x*gridDim.x*blockDim.y*gridDim.y;
+	t_j = blockIdx.x*blockDim.x + threadIdx.x;
+	t_i = blockIdx.y*blockDim.y + threadIdx.y;
+	t_k = blockIdx.z*blockDim.z + threadIdx.z;
+	tid = t_j + t_i*(N_W+1) + t_k*(N_W+1)*(N_H+1);
+	writeInterFlux( coord, nCells_b1, tid, rho_m, rho_p, vx_m, vx_p, vy_m, vy_p, vz_m, vz_p, E_m, E_p,
+					p_m, p_p, s_m, s_p, iFlx  );
 
-    bool boundBlock = false;
-    if ( blockIdx.x==0 || blockIdx.y==0 || blockIdx.z==0 ) boundBlock = true;
-    if ( blockIdx.x==(gridDim.x-1) || blockIdx.y==(gridDim.y-1) || blockIdx.z==(gridDim.z-1) ) boundBlock = true;
+	//Get iFlux_r for most right cell
+	// if ( blockIdx.x!=(gridDim.x-1) || blockIdx.y!=(gridDim.y-1) || blockIdx.z!=(gridDim.z-1) ) return;
+	t_j += 1;
+	t_i += 1;
+	t_k += 1;
 
-    if ( !boundBlock ) return;
+	if ( coord == 1 ){
+		if ( t_j != N_W ) return;
+		t_j += 1;
+	}
+	if ( coord == 2 ){
+		if ( t_i != N_H ) return;
+		t_i += 1;
+	}
+	if ( coord == 3 ){
+		if ( t_k != N_D ) return;
+		t_k += 1;
+	}
 
-    if ( t_j==0 )       writeBound( 1, nCells, cnsv, bound_l, t_j, t_i, t_k, tid );
-    if ( t_j==(N_W-1) ) writeBound( 1, nCells, cnsv, bound_r, t_j, t_i, t_k, tid );
+	rho_m = rho_p;
+	vx_m = vx_p;
+	vy_m = vy_p;
+	vz_m = vz_p;
+	E_m = E_p;
+	p_m = p_p;
+	cs_m = cs_p;
 
-    if ( t_i==0 )       writeBound( 2, nCells, cnsv, bound_d, t_j, t_i, t_k, tid );
-    if ( t_i==(N_H-1) ) writeBound( 2, nCells, cnsv, bound_u, t_j, t_i, t_k, tid );
+	//Right side of inter-cell
+	tid_p = t_j + t_i*(N_W+2) + t_k*(N_W+2)*(N_H+2);
+	rho_p = recons_l[ 0*nCells_b2 + tid_p ];
+	vx_p  = recons_l[ 1*nCells_b2 + tid_p ] / rho_p;
+	vy_p  = recons_l[ 2*nCells_b2 + tid_p ] / rho_p;
+	vz_p  = recons_l[ 3*nCells_b2 + tid_p ] / rho_p;
+	E_p   = recons_l[ 4*nCells_b2 + tid_p ];
 
-    if ( t_k==0 )       writeBound( 3, nCells, cnsv, bound_b, t_j, t_i, t_k, tid );
-    if ( t_k==(N_D-1) ) writeBound( 3, nCells, cnsv, bound_t, t_j, t_i, t_k, tid );
+	v2  = vx_p*vx_p + vy_p*vy_p + vz_p*vz_p;
+	p_p = ( E_p - 0.5*rho_p*v2 ) * (gamma-1);
+
+	if ( coord == 1 ){
+		s_m = min( vx_m - cs_m, vx_p - cs_p );
+		s_p = max( vx_m + cs_m, vx_p + cs_p );
+	}
+	if ( coord == 2 ){
+		s_m = min( vy_m - cs_m, vy_p - cs_p );
+		s_p = max( vy_m + cs_m, vy_p + cs_p );
+	}
+	if ( coord == 3 ){
+		s_m = min( vz_m - cs_m, vz_p - cs_p );
+		s_p = max( vz_m + cs_m, vz_p + cs_p );
+	}
+
+	t_j = blockIdx.x*blockDim.x + threadIdx.x;
+	t_i = blockIdx.y*blockDim.y + threadIdx.y;
+	t_k = blockIdx.z*blockDim.z + threadIdx.z;
+	if ( coord == 1 ) t_j += 1;
+	if ( coord == 2 ) t_i += 1;
+	if ( coord == 3 ) t_k += 1;
+	tid = t_j + t_i*(N_W+1) + t_k*(N_W+1)*(N_H+1);
+	writeInterFlux( coord, nCells_b1, tid, rho_m, rho_p, vx_m, vx_p, vy_m, vy_p, vz_m, vz_p, E_m, E_p,
+					p_m, p_p, s_m, s_p, iFlx  );
+
+
+}
+
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+__global__ void setInterFlux_hll( const int coord, const int nCells, const double gamma, const double dx, const double dy, const double dz,
+			 double *cnsv, double *iFlx,
+			 double *bound_l, double *bound_r,
+			 double *iFlx_bnd,
+       double* times ){
+  int t_j = blockIdx.x*blockDim.x + threadIdx.x;
+  int t_i = blockIdx.y*blockDim.y + threadIdx.y;
+  int t_k = blockIdx.z*blockDim.z + threadIdx.z;
+  int tid = t_j + t_i*blockDim.x*gridDim.x + t_k*blockDim.x*gridDim.x*blockDim.y*gridDim.y;
+
+  int tid_adj, boundId, stride;
+  double v2;
+  double rho_l, vx_l, vy_l, vz_l, E_l, p_l;
+  double rho_c, vx_c, vy_c, vz_c, E_c, p_c;
+
+  //Set adjacent id
+  if ( coord == 1 ){
+    if ( t_j == 0) tid_adj = (t_j) + t_i*blockDim.x*gridDim.x + t_k*blockDim.x*gridDim.x*blockDim.y*gridDim.y;
+    else tid_adj = (t_j-1) + t_i*blockDim.x*gridDim.x + t_k*blockDim.x*gridDim.x*blockDim.y*gridDim.y;
+  }
+  if ( coord == 2 ){
+    if ( t_i == 0) tid_adj = t_j + (t_i)*blockDim.x*gridDim.x + t_k*blockDim.x*gridDim.x*blockDim.y*gridDim.y;
+    else tid_adj = t_j + (t_i-1)*blockDim.x*gridDim.x + t_k*blockDim.x*gridDim.x*blockDim.y*gridDim.y;
+  }
+  if ( coord == 3 ){
+    if ( t_k == 0) tid_adj = t_j + t_i*blockDim.x*gridDim.x + (t_k)*blockDim.x*gridDim.x*blockDim.y*gridDim.y;
+    else tid_adj = t_j + t_i*blockDim.x*gridDim.x + (t_k-1)*blockDim.x*gridDim.x*blockDim.y*gridDim.y;
+  }
+  //Read adjacent and center conservatives
+  rho_l = cnsv[ 0*nCells + tid_adj ];
+  rho_c = cnsv[ 0*nCells + tid ];
+
+  vx_l = cnsv[ 1*nCells + tid_adj ] / rho_l;
+  vx_c = cnsv[ 1*nCells + tid ] / rho_c;
+
+  vy_l = cnsv[ 2*nCells + tid_adj ] / rho_l;
+  vy_c = cnsv[ 2*nCells + tid ] / rho_c;
+
+  vz_l = cnsv[ 3*nCells + tid_adj ] / rho_l;
+  vz_c = cnsv[ 3*nCells + tid ] / rho_c;
+
+  E_l = cnsv[ 4*nCells + tid_adj ];
+  E_c = cnsv[ 4*nCells + tid ];
+
+  //Load and apply boundery conditions
+  if ( coord == 1 ){
+    boundId = t_i + t_k*N_H;
+		stride = N_H*N_D;
+    if ( t_j == 0) {
+      rho_l = bound_l[0*stride + boundId];
+      vx_l  = bound_l[1*stride + boundId] / rho_l;
+      vy_l  = bound_l[2*stride + boundId] / rho_l;
+      vz_l  = bound_l[3*stride + boundId] / rho_l;
+      E_l   = bound_l[4*stride + boundId];
+    }
+  }
+  if ( coord == 2 ){
+    boundId = t_j + t_k*N_W;
+		stride = N_W*N_D;
+    if ( t_i == 0) {
+      rho_l = bound_l[0*stride + boundId];
+      vx_l  = bound_l[1*stride + boundId] / rho_l;
+      vy_l  = bound_l[2*stride + boundId] / rho_l;
+      vz_l  = bound_l[3*stride + boundId] / rho_l;
+      E_l   = bound_l[4*stride + boundId];
+    }
+  }
+  if ( coord == 3 ){
+    boundId = t_j + t_i*N_W;
+		stride = N_W*N_H;
+    if ( t_k == 0) {
+      rho_l = bound_l[0*stride + boundId];
+      vx_l  = bound_l[1*stride + boundId] / rho_l;
+      vy_l  = bound_l[2*stride + boundId] / rho_l;
+      vz_l  = bound_l[3*stride + boundId] / rho_l;
+      E_l   = bound_l[4*stride + boundId];
+    }
   }
 
-	///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-	///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-	__device__ double hll_interFlux( double val_l, double val_r, double F_l, double F_r, double s_l, double s_r ){
-	  if ( s_l > 0 ) return F_l;
-	  if ( s_r < 0 ) return F_r;
-	  return ( s_r*F_l - s_l*F_r + s_l*s_r*( val_r - val_l ) ) / ( s_r - s_l );
-	}
-	///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-	///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-	__device__ void writeInterFlux(const int coord, const int writeStride, int tid,
-					double rho_l, double rho_r, double vx_l, double vx_r, double vy_l, double vy_r, double vz_l, double vz_r, double E_l, double E_r,
-					double p_l, double p_r, double s_l, double s_r,
-					double *iFlx ){
-
-		// Adjacent fluxes from left and center cell
-		double F_l, F_r;
-
-		//iFlx rho
-		if ( coord == 1 ){
-			F_l = rho_l * vx_l;
-			F_r = rho_r * vx_r;
-		}
-		else if ( coord == 2 ){
-			F_l = rho_l * vy_l;
-			F_r = rho_r * vy_r;
-		}
-		else if ( coord == 3 ){
-			F_l = rho_l * vz_l;
-			F_r = rho_r * vz_r;
-		}
-		iFlx[0*writeStride + tid] = hll_interFlux( rho_l, rho_r, F_l, F_r, s_l, s_r );
-
-		//iFlx rho * vx
-		if ( coord == 1 ){
-			F_l = rho_l * vx_l * vx_l + p_l;
-			F_r = rho_r * vx_r * vx_r + p_r;
-		}
-		else if ( coord == 2 ){
-			F_l = rho_l * vx_l * vy_l;
-			F_r = rho_r * vx_r * vy_r;
-		}
-		else if ( coord == 3 ){
-			F_l = rho_l * vx_l * vz_l;
-			F_r = rho_r * vx_r * vz_r;
-		}
-		iFlx[1*writeStride + tid] = hll_interFlux( rho_l*vx_l, rho_r*vx_r, F_l, F_r, s_l, s_r );
-
-		//iFlx rho * vy
-		if ( coord == 1 ){
-			F_l = rho_l * vy_l * vx_l ;
-			F_r = rho_r * vy_r * vx_r ;
-		}
-		else if ( coord == 2 ){
-			F_l = rho_l * vy_l * vy_l + p_l;
-			F_r = rho_r * vy_r * vy_r + p_r;
-		}
-		else if ( coord == 3 ){
-			F_l = rho_l * vy_l * vz_l;
-			F_r = rho_r * vy_r * vz_r;
-		}
-		iFlx[2*writeStride + tid] = hll_interFlux( rho_l*vy_l, rho_r*vy_r, F_l, F_r, s_l, s_r );
-
-		//iFlx rho * vz
-		if ( coord == 1 ){
-			F_l = rho_l * vz_l * vx_l ;
-			F_r = rho_r * vz_r * vx_r ;
-		}
-		else if ( coord == 2 ){
-			F_l = rho_l * vz_l * vy_l ;
-			F_r = rho_r * vz_r * vy_r ;
-		}
-		else if ( coord == 3 ){
-			F_l = rho_l * vz_l * vz_l + p_l ;
-			F_r = rho_r * vz_r * vz_r + p_r ;
-		}
-		iFlx[3*writeStride + tid] = hll_interFlux( rho_l*vz_l, rho_r*vz_r, F_l, F_r, s_l, s_r );
-
-		//iFlx E
-		if ( coord == 1 ){
-			F_l = vx_l * ( E_l + p_l ) ;
-			F_r = vx_r * ( E_r + p_r ) ;
-		}
-		else if ( coord == 2 ){
-			F_l = vy_l * ( E_l + p_l ) ;
-			F_r = vy_r * ( E_r + p_r ) ;
-		}
-		else if ( coord == 3 ){
-			F_l = vz_l * ( E_l + p_l ) ;
-			F_r = vz_r * ( E_r + p_r ) ;
-		}
-		iFlx[4*writeStride + tid] = hll_interFlux( E_l, E_r, F_l, F_r, s_l, s_r );
-	}
-	///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-	///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-  __global__ void setInterFlux_hll( const int coord, const int nCells, const double gamma, const double dx, const double dy, const double dz,
-				 double *cnsv, double *iFlx,
-				 double *bound_l, double *bound_r,
-				 double *iFlx_bnd,
-         double* times ){
-    int t_j = blockIdx.x*blockDim.x + threadIdx.x;
-    int t_i = blockIdx.y*blockDim.y + threadIdx.y;
-    int t_k = blockIdx.z*blockDim.z + threadIdx.z;
-    int tid = t_j + t_i*blockDim.x*gridDim.x + t_k*blockDim.x*gridDim.x*blockDim.y*gridDim.y;
-
-    int tid_adj, boundId, stride;
-    double v2;
-    double rho_l, vx_l, vy_l, vz_l, E_l, p_l;
-    double rho_c, vx_c, vy_c, vz_c, E_c, p_c;
-
-    //Set adjacent id
-    if ( coord == 1 ){
-      if ( t_j == 0) tid_adj = (t_j) + t_i*blockDim.x*gridDim.x + t_k*blockDim.x*gridDim.x*blockDim.y*gridDim.y;
-      else tid_adj = (t_j-1) + t_i*blockDim.x*gridDim.x + t_k*blockDim.x*gridDim.x*blockDim.y*gridDim.y;
-    }
-    if ( coord == 2 ){
-      if ( t_i == 0) tid_adj = t_j + (t_i)*blockDim.x*gridDim.x + t_k*blockDim.x*gridDim.x*blockDim.y*gridDim.y;
-      else tid_adj = t_j + (t_i-1)*blockDim.x*gridDim.x + t_k*blockDim.x*gridDim.x*blockDim.y*gridDim.y;
-    }
-    if ( coord == 3 ){
-      if ( t_k == 0) tid_adj = t_j + t_i*blockDim.x*gridDim.x + (t_k)*blockDim.x*gridDim.x*blockDim.y*gridDim.y;
-      else tid_adj = t_j + t_i*blockDim.x*gridDim.x + (t_k-1)*blockDim.x*gridDim.x*blockDim.y*gridDim.y;
-    }
-    //Read adjacent and center conservatives
-    rho_l = cnsv[ 0*nCells + tid_adj ];
-    rho_c = cnsv[ 0*nCells + tid ];
-
-    vx_l = cnsv[ 1*nCells + tid_adj ] / rho_l;
-    vx_c = cnsv[ 1*nCells + tid ] / rho_c;
-
-    vy_l = cnsv[ 2*nCells + tid_adj ] / rho_l;
-    vy_c = cnsv[ 2*nCells + tid ] / rho_c;
-
-    vz_l = cnsv[ 3*nCells + tid_adj ] / rho_l;
-    vz_c = cnsv[ 3*nCells + tid ] / rho_c;
-
-    E_l = cnsv[ 4*nCells + tid_adj ];
-    E_c = cnsv[ 4*nCells + tid ];
-
-    //Load and apply boundery conditions
-    if ( coord == 1 ){
-      boundId = t_i + t_k*N_H;
-			stride = N_H*N_D;
-      if ( t_j == 0) {
-        rho_l = bound_l[0*stride + boundId];
-        vx_l  = bound_l[1*stride + boundId] / rho_l;
-        vy_l  = bound_l[2*stride + boundId] / rho_l;
-        vz_l  = bound_l[3*stride + boundId] / rho_l;
-        E_l   = bound_l[4*stride + boundId];
-      }
-    }
-    if ( coord == 2 ){
-      boundId = t_j + t_k*N_W;
-			stride = N_W*N_D;
-      if ( t_i == 0) {
-        rho_l = bound_l[0*stride + boundId];
-        vx_l  = bound_l[1*stride + boundId] / rho_l;
-        vy_l  = bound_l[2*stride + boundId] / rho_l;
-        vz_l  = bound_l[3*stride + boundId] / rho_l;
-        E_l   = bound_l[4*stride + boundId];
-      }
-    }
-    if ( coord == 3 ){
-      boundId = t_j + t_i*N_W;
-			stride = N_W*N_H;
-      if ( t_k == 0) {
-        rho_l = bound_l[0*stride + boundId];
-        vx_l  = bound_l[1*stride + boundId] / rho_l;
-        vy_l  = bound_l[2*stride + boundId] / rho_l;
-        vz_l  = bound_l[3*stride + boundId] / rho_l;
-        E_l   = bound_l[4*stride + boundId];
-      }
-    }
-
-
-    //Boundary bounce condition
-      if ( coord==1 && t_j == 0 ) vx_l = -vx_c;
-        //Boundary bounce condition
-      if ( coord==2 && t_i == 0 ) vy_l = -vy_c;
+  //Boundary bounce condition
+    if ( coord==1 && t_j == 0 ) vx_l = -vx_c;
       //Boundary bounce condition
-      if ( coord==3 && t_k == 0 ) vz_l = -vz_c;
-
-    v2    = vx_l*vx_l + vy_l*vy_l + vz_l*vz_l;
-    p_l   = ( E_l - rho_l*v2/2 ) * (gamma-1);
-
-    v2    = vx_c*vx_c + vy_c*vy_c + vz_c*vz_c;
-    p_c   = ( E_c - rho_c*v2/2 ) * (gamma-1);
-
-    double cs_l, cs_c, s_l, s_c;
-    cs_l = sqrt( p_l * gamma / rho_l );
-    cs_c = sqrt( p_c * gamma / rho_c );
-
-    if ( coord == 1 ){
-      s_l = min( vx_l - cs_l, vx_c - cs_c );
-      s_c = max( vx_l + cs_l, vx_c + cs_c );
-      //Use v2 to save time minimum
-      v2 = dx / ( abs( vx_c ) + cs_c );
-      v2 = min( v2, dy / ( abs( vy_c ) + cs_c ) );
-      v2 = min( v2, dz / ( abs( vz_c ) + cs_c ) );
-      times[ tid ] = v2;
-    }
-
-    else if ( coord == 2 ){
-      s_l = min( vy_l - cs_l, vy_c - cs_c );
-      s_c = max( vy_l + cs_l, vy_c + cs_c ); 
-    }
-
-    else if ( coord == 3 ){
-      s_l = min( vz_l - cs_l, vz_c - cs_c );
-      s_c = max( vz_l + cs_l, vz_c + cs_c );
-    }
-
-    writeInterFlux( coord, nCells, tid, rho_l, rho_c, vx_l, vx_c, vy_l, vy_c, vz_l, vz_c, E_l, E_c,
-            p_l, p_c, s_l, s_c, iFlx  );
-
-    //Get iFlux_r for most right cell
-    // if ( blockIdx.x!=(gridDim.x-1) || blockIdx.y!=(gridDim.y-1) || blockIdx.z!=(gridDim.z-1) ) return;
-
-    if ( coord == 1 ){
-      if ( t_j != (N_W-1) ) return;
-    }
-    if ( coord == 2 ){
-      if ( t_i != (N_H-1) ) return;
-    }
-    if ( coord == 3 ){
-      if ( t_k != (N_D-1) ) return;
-    }
-
-    rho_l = rho_c;
-    vx_l = vx_c;
-    vy_l = vy_c;
-    vz_l = vz_c;
-    E_l = E_c;
-    p_l = p_c;
-    cs_l = cs_c;
-
-
-
-    //Load Bounderies for right part of the box_size
-    rho_c = bound_r[0*stride + boundId];
-    vx_c  = bound_r[1*stride + boundId] / rho_c;
-    vy_c  = bound_r[2*stride + boundId] / rho_c;
-    vz_c  = bound_r[3*stride + boundId] / rho_c;
-    E_c   = bound_r[4*stride + boundId];
-
-    // //Boundary bounce conditions
-    if ( coord==1 && t_j == (N_W-1) ) vx_c = -vx_l;
-      //Boundary bounce condition
-    if ( coord==2 && t_i == (N_H-1) ) vy_c = -vy_l;
+    if ( coord==2 && t_i == 0 ) vy_l = -vy_c;
     //Boundary bounce condition
-    if ( coord==3 && t_k == (N_D-1) ) vz_c = -vz_l;
+    if ( coord==3 && t_k == 0 ) vz_l = -vz_c;
 
-    v2    = vx_c*vx_c + vy_c*vy_c + vz_c*vz_c;
-    p_c   = ( E_c - rho_c*v2/2 ) * (gamma-1);
-    cs_c = sqrt( p_c * gamma / rho_c );
-    if ( coord == 1 ){
-      s_l = min( vx_l - cs_l, vx_c - cs_c );
-      s_c = max( vx_l + cs_l, vx_c + cs_c );
-    }
+  v2    = vx_l*vx_l + vy_l*vy_l + vz_l*vz_l;
+  p_l   = ( E_l - rho_l*v2/2 ) * (gamma-1);
 
-    else if ( coord == 2 ){
-      s_l = min( vy_l - cs_l, vy_c - cs_c );
-      s_c = max( vy_l + cs_l, vy_c + cs_c );
-    }
+  v2    = vx_c*vx_c + vy_c*vy_c + vz_c*vz_c;
+  p_c   = ( E_c - rho_c*v2/2 ) * (gamma-1);
 
-    else if ( coord == 3 ){
-      s_l = min( vz_l - cs_l, vz_c - cs_c );
-      s_c = max( vz_l + cs_l, vz_c + cs_c );
-    }
-		writeInterFlux( coord, stride, boundId, rho_l, rho_c, vx_l, vx_c, vy_l, vy_c, vz_l, vz_c, E_l, E_c,
-            p_l, p_c, s_l, s_c, iFlx_bnd  );
-    // writeInterFlux_b( coord, boundId, rho_l, rho_c, vx_l, vx_c, vy_l, vy_c, vz_l, vz_c, E_l, E_c,
-    //         p_l, p_c, s_l, s_c, iFlx, iFlx_1_bnd, iFlx_2_bnd, iFlx_3_bnd, iFlx_4_bnd, iFlx_5_bnd  );
+  double cs_l, cs_c, s_l, s_c;
+  cs_l = sqrt( p_l * gamma / rho_l );
+  cs_c = sqrt( p_c * gamma / rho_c );
+
+  if ( coord == 1 ){
+    s_l = min( vx_l - cs_l, vx_c - cs_c );
+    s_c = max( vx_l + cs_l, vx_c + cs_c );
+    // //Use v2 to save time minimum
+    // v2 = dx / ( abs( vx_c ) + cs_c );
+    // v2 = min( v2, dy / ( abs( vy_c ) + cs_c ) );
+    // v2 = min( v2, dz / ( abs( vz_c ) + cs_c ) );
+    // times[ tid ] = v2;
   }
-  ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-  ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-	__global__ void getInterFlux_hll( const int coord, const int nCells, const double dt,  const double gamma,
-				 const double dx, const double dy, const double dz,
-				 double *cnsv_adv, double *iFlx, double *iFlx_bnd ){
-				 //  double* gForceX, double* gForceY, double* gForceZ, double* gravWork ){
-		int t_j = blockIdx.x*blockDim.x + threadIdx.x;
-		int t_i = blockIdx.y*blockDim.y + threadIdx.y;
-		int t_k = blockIdx.z*blockDim.z + threadIdx.z;
-		int tid = t_j + t_i*blockDim.x*gridDim.x + t_k*blockDim.x*gridDim.x*blockDim.y*gridDim.y;
+  else if ( coord == 2 ){
+    s_l = min( vy_l - cs_l, vy_c - cs_c );
+    s_c = max( vy_l + cs_l, vy_c + cs_c );
+  }
 
-		int tid_adj, boundId, stride;
-		double iFlx1_l, iFlx2_l, iFlx3_l, iFlx4_l, iFlx5_l;
-		double iFlx1_r, iFlx2_r, iFlx3_r, iFlx4_r, iFlx5_r;
-		double delta;
+  else if ( coord == 3 ){
+    s_l = min( vz_l - cs_l, vz_c - cs_c );
+    s_c = max( vz_l + cs_l, vz_c + cs_c );
+  }
 
-		//Set adjacent id
-		if ( coord == 1 ){
-			if ( t_j == N_W-1 ) tid_adj = (t_j) + t_i*blockDim.x*gridDim.x + t_k*blockDim.x*gridDim.x*blockDim.y*gridDim.y;
-			else tid_adj = (t_j+1) + t_i*blockDim.x*gridDim.x + t_k*blockDim.x*gridDim.x*blockDim.y*gridDim.y;
-			delta = dt / dx;
+  writeInterFlux( coord, nCells, tid, rho_l, rho_c, vx_l, vx_c, vy_l, vy_c, vz_l, vz_c, E_l, E_c,
+          p_l, p_c, s_l, s_c, iFlx  );
+
+  //Get iFlux_r for most right cell
+  // if ( blockIdx.x!=(gridDim.x-1) || blockIdx.y!=(gridDim.y-1) || blockIdx.z!=(gridDim.z-1) ) return;
+
+  if ( coord == 1 ){
+    if ( t_j != (N_W-1) ) return;
+  }
+  if ( coord == 2 ){
+    if ( t_i != (N_H-1) ) return;
+  }
+  if ( coord == 3 ){
+    if ( t_k != (N_D-1) ) return;
+  }
+
+  rho_l = rho_c;
+  vx_l = vx_c;
+  vy_l = vy_c;
+  vz_l = vz_c;
+  E_l = E_c;
+  p_l = p_c;
+  cs_l = cs_c;
+
+
+
+  //Load Bounderies for right part of the box_size
+  rho_c = bound_r[0*stride + boundId];
+  vx_c  = bound_r[1*stride + boundId] / rho_c;
+  vy_c  = bound_r[2*stride + boundId] / rho_c;
+  vz_c  = bound_r[3*stride + boundId] / rho_c;
+  E_c   = bound_r[4*stride + boundId];
+
+  // //Boundary bounce conditions
+  if ( coord==1 && t_j == (N_W-1) ) vx_c = -vx_l;
+    //Boundary bounce condition
+  if ( coord==2 && t_i == (N_H-1) ) vy_c = -vy_l;
+  //Boundary bounce condition
+  if ( coord==3 && t_k == (N_D-1) ) vz_c = -vz_l;
+
+  v2    = vx_c*vx_c + vy_c*vy_c + vz_c*vz_c;
+  p_c   = ( E_c - rho_c*v2/2 ) * (gamma-1);
+  cs_c = sqrt( p_c * gamma / rho_c );
+  if ( coord == 1 ){
+    s_l = min( vx_l - cs_l, vx_c - cs_c );
+    s_c = max( vx_l + cs_l, vx_c + cs_c );
+  }
+
+  else if ( coord == 2 ){
+    s_l = min( vy_l - cs_l, vy_c - cs_c );
+    s_c = max( vy_l + cs_l, vy_c + cs_c );
+  }
+
+  else if ( coord == 3 ){
+    s_l = min( vz_l - cs_l, vz_c - cs_c );
+    s_c = max( vz_l + cs_l, vz_c + cs_c );
+  }
+	writeInterFlux( coord, stride, boundId, rho_l, rho_c, vx_l, vx_c, vy_l, vy_c, vz_l, vz_c, E_l, E_c,
+          p_l, p_c, s_l, s_c, iFlx_bnd  );
+  // writeInterFlux_b( coord, boundId, rho_l, rho_c, vx_l, vx_c, vy_l, vy_c, vz_l, vz_c, E_l, E_c,
+  //         p_l, p_c, s_l, s_c, iFlx, iFlx_1_bnd, iFlx_2_bnd, iFlx_3_bnd, iFlx_4_bnd, iFlx_5_bnd  );
+}
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+__global__ void advanceConserved( const int nCells, const int nCells_b1,
+			const double dt,  const double gamma,
+			const double dx, const double dy, const double dz,
+			double *cnsv, double *iFlx_x, double *iFlx_y, double *iFlx_z ){
+			 //  double* gForceX, double* gForceY, double* gForceZ, double* gravWork ){
+	int t_j = blockIdx.x*blockDim.x + threadIdx.x;
+	int t_i = blockIdx.y*blockDim.y + threadIdx.y;
+	int t_k = blockIdx.z*blockDim.z + threadIdx.z;
+	int tid = t_j + t_i*blockDim.x*gridDim.x + t_k*blockDim.x*gridDim.x*blockDim.y*gridDim.y;
+
+
+	double adv_1, adv_2, adv_3, adv_4, adv_5;
+	double delta;
+	adv_1 = cnsv[0*nCells + tid];
+	adv_2 = cnsv[1*nCells + tid];
+	adv_3 = cnsv[2*nCells + tid];
+	adv_4 = cnsv[3*nCells + tid];
+	adv_5 = cnsv[4*nCells + tid];
+
+	int tid_adj, tid_r;
+	double iFlx1_l, iFlx2_l, iFlx3_l, iFlx4_l, iFlx5_l;
+	double iFlx1_r, iFlx2_r, iFlx3_r, iFlx4_r, iFlx5_r;
+	//Read inter-cell fluxes
+	tid_r = t_j + t_i*(N_W+1) + t_k*(N_W+1)*(N_H+1);
+	//Flux in X axis
+	iFlx1_l = iFlx_x[0*nCells_b1 + tid_r ];
+	iFlx2_l = iFlx_x[1*nCells_b1 + tid_r ];
+	iFlx3_l = iFlx_x[2*nCells_b1 + tid_r ];
+	iFlx4_l = iFlx_x[3*nCells_b1 + tid_r ];
+	iFlx5_l = iFlx_x[4*nCells_b1 + tid_r ];
+
+	tid_adj = (t_j+1) + t_i*(N_W+1) + t_k*(N_W+1)*(N_H+1);
+	iFlx1_r = iFlx_x[0*nCells_b1 + tid_adj ];
+	iFlx2_r = iFlx_x[1*nCells_b1 + tid_adj ];
+	iFlx3_r = iFlx_x[2*nCells_b1 + tid_adj ];
+	iFlx4_r = iFlx_x[3*nCells_b1 + tid_adj ];
+	iFlx5_r = iFlx_x[4*nCells_b1 + tid_adj ];
+
+	delta = dt / dx;
+	adv_1 += delta*( iFlx1_l - iFlx1_r );
+	adv_2 += delta*( iFlx2_l - iFlx2_r );
+	adv_3 += delta*( iFlx3_l - iFlx3_r );
+	adv_4 += delta*( iFlx4_l - iFlx4_r );
+	adv_5 += delta*( iFlx5_l - iFlx5_r );
+
+	//Flux in Y axis
+	iFlx1_l = iFlx_y[0*nCells_b1 + tid_r ];
+	iFlx2_l = iFlx_y[1*nCells_b1 + tid_r ];
+	iFlx3_l = iFlx_y[2*nCells_b1 + tid_r ];
+	iFlx4_l = iFlx_y[3*nCells_b1 + tid_r ];
+	iFlx5_l = iFlx_y[4*nCells_b1 + tid_r ];
+
+	tid_adj = t_j + (t_i+1)*(N_W+1) + t_k*(N_W+1)*(N_H+1);
+	iFlx1_r = iFlx_y[0*nCells_b1 + tid_adj ];
+	iFlx2_r = iFlx_y[1*nCells_b1 + tid_adj ];
+	iFlx3_r = iFlx_y[2*nCells_b1 + tid_adj ];
+	iFlx4_r = iFlx_y[3*nCells_b1 + tid_adj ];
+	iFlx5_r = iFlx_y[4*nCells_b1 + tid_adj ];
+
+	delta = dt / dy;
+	adv_1 += delta*( iFlx1_l - iFlx1_r );
+	adv_2 += delta*( iFlx2_l - iFlx2_r );
+	adv_3 += delta*( iFlx3_l - iFlx3_r );
+	adv_4 += delta*( iFlx4_l - iFlx4_r );
+	adv_5 += delta*( iFlx5_l - iFlx5_r );
+
+	//Flux in Z axis
+	iFlx1_l = iFlx_z[0*nCells_b1 + tid_r ];
+	iFlx2_l = iFlx_z[1*nCells_b1 + tid_r ];
+	iFlx3_l = iFlx_z[2*nCells_b1 + tid_r ];
+	iFlx4_l = iFlx_z[3*nCells_b1 + tid_r ];
+	iFlx5_l = iFlx_z[4*nCells_b1 + tid_r ];
+
+	tid_adj = t_j + t_i*(N_W+1) + (t_k+1)*(N_W+1)*(N_H+1);
+	iFlx1_r = iFlx_z[0*nCells_b1 + tid_adj ];
+	iFlx2_r = iFlx_z[1*nCells_b1 + tid_adj ];
+	iFlx3_r = iFlx_z[2*nCells_b1 + tid_adj ];
+	iFlx4_r = iFlx_z[3*nCells_b1 + tid_adj ];
+	iFlx5_r = iFlx_z[4*nCells_b1 + tid_adj ];
+
+	delta = dt / dz;
+	adv_1 += delta*( iFlx1_l - iFlx1_r );
+	adv_2 += delta*( iFlx2_l - iFlx2_r );
+	adv_3 += delta*( iFlx3_l - iFlx3_r );
+	adv_4 += delta*( iFlx4_l - iFlx4_r );
+	adv_5 += delta*( iFlx5_l - iFlx5_r );
+
+	//Update values
+	cnsv[0*nCells + tid] = adv_1;
+	cnsv[1*nCells + tid] = adv_2;
+	cnsv[2*nCells + tid] = adv_3;
+	cnsv[3*nCells + tid] = adv_4;
+	cnsv[4*nCells + tid] = adv_5;
+
+}
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+
+
+__global__ void getInterFlux_hll( const int coord, const int nCells, const double dt,  const double gamma,
+			 const double dx, const double dy, const double dz,
+			 double *cnsv_adv, double *iFlx, double *iFlx_bnd ){
+			 //  double* gForceX, double* gForceY, double* gForceZ, double* gravWork ){
+	int t_j = blockIdx.x*blockDim.x + threadIdx.x;
+	int t_i = blockIdx.y*blockDim.y + threadIdx.y;
+	int t_k = blockIdx.z*blockDim.z + threadIdx.z;
+	int tid = t_j + t_i*blockDim.x*gridDim.x + t_k*blockDim.x*gridDim.x*blockDim.y*gridDim.y;
+
+	int tid_adj, boundId, stride;
+	double iFlx1_l, iFlx2_l, iFlx3_l, iFlx4_l, iFlx5_l;
+	double iFlx1_r, iFlx2_r, iFlx3_r, iFlx4_r, iFlx5_r;
+	double delta;
+
+	//Set adjacent id
+	if ( coord == 1 ){
+		if ( t_j == N_W-1 ) tid_adj = (t_j) + t_i*blockDim.x*gridDim.x + t_k*blockDim.x*gridDim.x*blockDim.y*gridDim.y;
+		else tid_adj = (t_j+1) + t_i*blockDim.x*gridDim.x + t_k*blockDim.x*gridDim.x*blockDim.y*gridDim.y;
+		delta = dt / dx ;
+	}
+	if ( coord == 2 ){
+		if ( t_i == N_H-1 ) tid_adj = t_j + (t_i)*blockDim.x*gridDim.x + t_k*blockDim.x*gridDim.x*blockDim.y*gridDim.y;
+		else tid_adj = t_j + (t_i+1)*blockDim.x*gridDim.x + t_k*blockDim.x*gridDim.x*blockDim.y*gridDim.y;
+		delta = dt / dy;
+	}
+	if ( coord == 3 ){
+		if ( t_k == N_D-1) tid_adj = t_j + t_i*blockDim.x*gridDim.x + (t_k)*blockDim.x*gridDim.x*blockDim.y*gridDim.y;
+		else tid_adj = t_j + t_i*blockDim.x*gridDim.x + (t_k+1)*blockDim.x*gridDim.x*blockDim.y*gridDim.y;
+		delta = dt / dz;
+	}
+
+	//Read inter-cell fluxes
+	iFlx1_l = iFlx[0*nCells + tid ];
+	iFlx1_r = iFlx[0*nCells + tid_adj ];
+
+	iFlx2_l = iFlx[1*nCells + tid ];
+	iFlx2_r = iFlx[1*nCells + tid_adj ];
+
+	iFlx3_l = iFlx[2*nCells + tid ];
+	iFlx3_r = iFlx[2*nCells + tid_adj ];
+
+	iFlx4_l = iFlx[3*nCells + tid ];
+	iFlx4_r = iFlx[3*nCells + tid_adj ];
+
+	iFlx5_l = iFlx[4*nCells + tid ];
+	iFlx5_r = iFlx[4*nCells + tid_adj ];
+
+	if ( coord == 1 ){
+		boundId = t_i + t_k*N_H;
+		stride = N_H*N_D;
+		if ( t_j == (N_W-1) ) {
+			iFlx1_r = iFlx_bnd[0*stride + boundId];
+			iFlx2_r = iFlx_bnd[1*stride + boundId];
+			iFlx3_r = iFlx_bnd[2*stride + boundId];
+			iFlx4_r = iFlx_bnd[3*stride + boundId];
+			iFlx5_r = iFlx_bnd[4*stride + boundId];
 		}
-		if ( coord == 2 ){
-			if ( t_i == N_H-1 ) tid_adj = t_j + (t_i)*blockDim.x*gridDim.x + t_k*blockDim.x*gridDim.x*blockDim.y*gridDim.y;
-			else tid_adj = t_j + (t_i+1)*blockDim.x*gridDim.x + t_k*blockDim.x*gridDim.x*blockDim.y*gridDim.y;
-			delta = dt / dy;
+	}
+	if ( coord == 2 ){
+		boundId = t_j + t_k*N_W;
+		stride = N_W*N_D;
+		if ( t_i == (N_H-1) ) {
+			iFlx1_r = iFlx_bnd[0*stride + boundId];
+			iFlx2_r = iFlx_bnd[1*stride + boundId];
+			iFlx3_r = iFlx_bnd[2*stride + boundId];
+			iFlx4_r = iFlx_bnd[3*stride + boundId];
+			iFlx5_r = iFlx_bnd[4*stride + boundId];
 		}
-		if ( coord == 3 ){
-			if ( t_k == N_D-1) tid_adj = t_j + t_i*blockDim.x*gridDim.x + (t_k)*blockDim.x*gridDim.x*blockDim.y*gridDim.y;
-			else tid_adj = t_j + t_i*blockDim.x*gridDim.x + (t_k+1)*blockDim.x*gridDim.x*blockDim.y*gridDim.y;
-			delta = dt / dz;
-		}
-
-		//Read inter-cell fluxes
-		iFlx1_l = iFlx[0*nCells + tid ];
-		iFlx1_r = iFlx[0*nCells + tid_adj ];
-
-		iFlx2_l = iFlx[1*nCells + tid ];
-		iFlx2_r = iFlx[1*nCells + tid_adj ];
-
-		iFlx3_l = iFlx[2*nCells + tid ];
-		iFlx3_r = iFlx[2*nCells + tid_adj ];
-
-		iFlx4_l = iFlx[3*nCells + tid ];
-		iFlx4_r = iFlx[3*nCells + tid_adj ];
-
-		iFlx5_l = iFlx[4*nCells + tid ];
-		iFlx5_r = iFlx[4*nCells + tid_adj ];
-
-		if ( coord == 1 ){
-			boundId = t_i + t_k*N_H;
-			stride = N_H*N_D;
-			if ( t_j == (N_W-1) ) {
-				iFlx1_r = iFlx_bnd[0*stride + boundId];
-				iFlx2_r = iFlx_bnd[1*stride + boundId];
-				iFlx3_r = iFlx_bnd[2*stride + boundId];
-				iFlx4_r = iFlx_bnd[3*stride + boundId];
-				iFlx5_r = iFlx_bnd[4*stride + boundId];
-			}
-		}
-		if ( coord == 2 ){
-			boundId = t_j + t_k*N_W;
-			stride = N_W*N_D;
-			if ( t_i == (N_H-1) ) {
-				iFlx1_r = iFlx_bnd[0*stride + boundId];
-				iFlx2_r = iFlx_bnd[1*stride + boundId];
-				iFlx3_r = iFlx_bnd[2*stride + boundId];
-				iFlx4_r = iFlx_bnd[3*stride + boundId];
-				iFlx5_r = iFlx_bnd[4*stride + boundId];
-			}
-		}
-		if ( coord == 3 ){
-			boundId = t_j + t_i*N_W;
-			stride = N_W*N_H;
-			if ( t_k == (N_D-1) ) {
-				iFlx1_r = iFlx_bnd[0*stride + boundId];
-				iFlx2_r = iFlx_bnd[1*stride + boundId];
-				iFlx3_r = iFlx_bnd[2*stride + boundId];
-				iFlx4_r = iFlx_bnd[3*stride + boundId];
-				iFlx5_r = iFlx_bnd[4*stride + boundId];
-			}
-		}
-		//Load and apply boundery conditions
-		// if ( coord == 1 ){
-		//   boundId = t_i + t_k*N_H;
-		//   if ( t_j == (N_W-1) ) {
-		//     iFlx1_r = iFlx_1_bnd[boundId];
-		//     iFlx2_r = iFlx_2_bnd[boundId];
-		//     iFlx3_r = iFlx_3_bnd[boundId];
-		//     iFlx4_r = iFlx_4_bnd[boundId];
-		//     iFlx5_r = iFlx_5_bnd[boundId];
-		//   }
-		// }
-		// if ( coord == 2 ){
-		//   boundId = t_j + t_k*N_W;
-		//   if ( t_i == (N_H-1) ) {
-		//     iFlx1_r = iFlx_1_bnd[boundId];
-		//     iFlx2_r = iFlx_2_bnd[boundId];
-		//     iFlx3_r = iFlx_3_bnd[boundId];
-		//     iFlx4_r = iFlx_4_bnd[boundId];
-		//     iFlx5_r = iFlx_5_bnd[boundId];
-		//   }
-		// }
-		// if ( coord == 3 ){
-		//   boundId = t_j + t_i*N_W;
-		//   if ( t_k == (N_D-1) ) {
-		//     iFlx1_r = iFlx_1_bnd[boundId];
-		//     iFlx2_r = iFlx_2_bnd[boundId];
-		//     iFlx3_r = iFlx_3_bnd[boundId];
-		//     iFlx4_r = iFlx_4_bnd[boundId];
-		//     iFlx5_r = iFlx_5_bnd[boundId];
-		//   }
-		// }
-
-		//Advance the consv values
-		// cnsv_1[ tid ] = cnsv_1[ tid ] - delta*( iFlx1_r - iFlx1_l );
-		// cnsv_2[ tid ] = cnsv_2[ tid ] - delta*( iFlx2_r - iFlx2_l ) + dt*gForceX[tid]*50;
-		// cnsv_3[ tid ] = cnsv_3[ tid ] - delta*( iFlx3_r - iFlx3_l ) + dt*gForceY[tid]*50;
-		// cnsv_4[ tid ] = cnsv_4[ tid ] - delta*( iFlx4_r - iFlx4_l ) + dt*gForceZ[tid]*50;
-		// cnsv_5[ tid ] = cnsv_5[ tid ] - delta*( iFlx5_r - iFlx5_l ) + dt*gravWork[tid]*50;
-
-		if ( coord == 1 ){
-			cnsv_adv[0*nCells +  tid ] = -delta*( iFlx1_r - iFlx1_l );
-			cnsv_adv[1*nCells +  tid ] = -delta*( iFlx2_r - iFlx2_l );
-			cnsv_adv[2*nCells +  tid ] = -delta*( iFlx3_r - iFlx3_l );
-			cnsv_adv[3*nCells +  tid ] = -delta*( iFlx4_r - iFlx4_l );
-			cnsv_adv[4*nCells +  tid ] = -delta*( iFlx5_r - iFlx5_l );
-		}
-		else{
-			cnsv_adv[0*nCells +  tid ] = cnsv_adv[0*nCells +  tid ] - delta*( iFlx1_r - iFlx1_l );
-			cnsv_adv[1*nCells +  tid ] = cnsv_adv[1*nCells +  tid ] - delta*( iFlx2_r - iFlx2_l );
-			cnsv_adv[2*nCells +  tid ] = cnsv_adv[2*nCells +  tid ] - delta*( iFlx3_r - iFlx3_l );
-			cnsv_adv[3*nCells +  tid ] = cnsv_adv[3*nCells +  tid ] - delta*( iFlx4_r - iFlx4_l );
-			cnsv_adv[4*nCells +  tid ] = cnsv_adv[4*nCells +  tid ] - delta*( iFlx5_r - iFlx5_l );
+	}
+	if ( coord == 3 ){
+		boundId = t_j + t_i*N_W;
+		stride = N_W*N_H;
+		if ( t_k == (N_D-1) ) {
+			iFlx1_r = iFlx_bnd[0*stride + boundId];
+			iFlx2_r = iFlx_bnd[1*stride + boundId];
+			iFlx3_r = iFlx_bnd[2*stride + boundId];
+			iFlx4_r = iFlx_bnd[3*stride + boundId];
+			iFlx5_r = iFlx_bnd[4*stride + boundId];
 		}
 	}
 
-	///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-	///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+	//Advance the consv values
+	// cnsv_1[ tid ] = cnsv_1[ tid ] - delta*( iFlx1_r - iFlx1_l );
+	// cnsv_2[ tid ] = cnsv_2[ tid ] - delta*( iFlx2_r - iFlx2_l ) + dt*gForceX[tid]*50;
+	// cnsv_3[ tid ] = cnsv_3[ tid ] - delta*( iFlx3_r - iFlx3_l ) + dt*gForceY[tid]*50;
+	// cnsv_4[ tid ] = cnsv_4[ tid ] - delta*( iFlx4_r - iFlx4_l ) + dt*gForceZ[tid]*50;
+	// cnsv_5[ tid ] = cnsv_5[ tid ] - delta*( iFlx5_r - iFlx5_l ) + dt*gravWork[tid]*50;
 
-	__global__ void addDtoD( const int nCells,
-			double *dst, double *sum ){
-		int t_j = blockIdx.x*blockDim.x + threadIdx.x;
-		int t_i = blockIdx.y*blockDim.y + threadIdx.y;
-		int t_k = blockIdx.z*blockDim.z + threadIdx.z;
-		int tid = t_j + t_i*blockDim.x*gridDim.x + t_k*blockDim.x*gridDim.x*blockDim.y*gridDim.y;
-
-		dst[0*nCells + tid] = dst[0*nCells + tid] + sum[0*nCells + tid];
-		dst[1*nCells + tid] = dst[1*nCells + tid] + sum[1*nCells + tid];
-		dst[2*nCells + tid] = dst[2*nCells + tid] + sum[2*nCells + tid];
-		dst[3*nCells + tid] = dst[3*nCells + tid] + sum[3*nCells + tid];
-		dst[4*nCells + tid] = dst[4*nCells + tid] + sum[4*nCells + tid];
+	if ( coord == 1 ){
+		cnsv_adv[0*nCells +  tid ] = delta*( iFlx1_l - iFlx1_r );
+		cnsv_adv[1*nCells +  tid ] = delta*( iFlx2_l - iFlx2_r );
+		cnsv_adv[2*nCells +  tid ] = delta*( iFlx3_l - iFlx3_r );
+		cnsv_adv[3*nCells +  tid ] = delta*( iFlx4_l - iFlx4_r );
+		cnsv_adv[4*nCells +  tid ] = delta*( iFlx5_l - iFlx5_r );
 	}
+	else{
+		cnsv_adv[0*nCells +  tid ] += delta*( iFlx1_l - iFlx1_r );
+		cnsv_adv[1*nCells +  tid ] += delta*( iFlx2_l - iFlx2_r );
+		cnsv_adv[2*nCells +  tid ] += delta*( iFlx3_l - iFlx3_r );
+		cnsv_adv[3*nCells +  tid ] += delta*( iFlx4_l - iFlx4_r );
+		cnsv_adv[4*nCells +  tid ] += delta*( iFlx5_l - iFlx5_r );
+	}
+}
+
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+__global__ void addDtoD( const int nCells,
+		double *dst, double *sum ){
+	int t_j = blockIdx.x*blockDim.x + threadIdx.x;
+	int t_i = blockIdx.y*blockDim.y + threadIdx.y;
+	int t_k = blockIdx.z*blockDim.z + threadIdx.z;
+	int tid = t_j + t_i*blockDim.x*gridDim.x + t_k*blockDim.x*gridDim.x*blockDim.y*gridDim.y;
+
+	dst[0*nCells + tid] += sum[0*nCells + tid];
+	dst[1*nCells + tid] += sum[1*nCells + tid];
+	dst[2*nCells + tid] += sum[2*nCells + tid];
+	dst[3*nCells + tid] += sum[3*nCells + tid];
+	dst[4*nCells + tid] += sum[4*nCells + tid];
+}
 }//End of extern 'C'
 
 

@@ -43,12 +43,15 @@ outDir = "/home/bruno/Desktop/data/hydro/"
 ensureDirectory( outDir )
 
 #set simulation volume dimentions
-nWidth = nPoints
+nWidth  = nPoints
 nHeight = nPoints
-nDepth = nPoints
-nCells = nWidth*nHeight*nDepth
+nDepth  = nPoints
 nFields = 5
-
+nGhost  = 1
+nCells  = nWidth*nHeight*nDepth
+nCells_b1 = (nWidth+1)*(nHeight+1)*(nDepth+1)
+nCells_b2 = (nWidth+2)*(nHeight+2)*(nDepth+2)
+# nCells_Ghost = (nWidth+nGhost)*(nHeight+nGhost)*(nDepth+nGhost)
 Lx = 1.
 Ly = 1.
 Lz = 1.
@@ -59,17 +62,17 @@ dx, dy, dz = Lx/(nWidth-1), Ly/(nHeight-1), Lz/(nDepth-1 )
 Z, Y, X = np.mgrid[ zMin:zMax:nDepth*1j, yMin:yMax:nHeight*1j, xMin:xMax:nWidth*1j ]
 xPoints = X[0,0,:]
 yPoints = Y[0,:,0]
-zPoints = Z[0,0,:]
+zPoints = Z[:,0,0]
 R = np.sqrt( X*X + Y*Y + Z*Z )
 sphereR = 0.25
-sphereOffCenter = 0.25
+sphereOffCenter = 0.
 sphere = np.sqrt( (X- sphereOffCenter)**2 + Y*Y + Z*Z ) < 0.2
 sphere_left  = ( np.sqrt( (X+sphereOffCenter)*(X+sphereOffCenter) + Y*Y + Z*Z ) < sphereR )
 sphere_right = ( np.sqrt( (X-sphereOffCenter)*(X-sphereOffCenter) + Y*Y + Z*Z ) < sphereR )
 spheres = sphere_right + sphere_left
 
 gamma = 7./5.
-c0 = 0.4
+c0 = 0.49
 
 #Change precision of the parameters
 gamma = cudaPre(gamma)
@@ -101,8 +104,8 @@ nBlocks3D = grid3D[0]*grid3D[1]*grid3D[2]
 grid3D_poisson = (gridx//2, gridy, gridz)
 nPointsBlock = block3D[0]*block3D[1]*block3D[2]
 nBlocksGrid = gridx * gridy * gridz
-block2D = ( 16, 16, 1 )
-grid2D = ( nWidth/block2D[0],  nHeight/block2D[1], 1 )
+# block2D = ( 16, 16, 1 )
+# grid2D = ( nWidth/block2D[0],  nHeight/block2D[1], 1 )
 block1D = (512,1,1)
 grid1D = (nCells/block1D[0], 1, 1)
 
@@ -113,7 +116,7 @@ cudaCodeString = cudaCodeString.replace('N_WIDTH', str(nWidth) )
 cudaCodeString = cudaCodeString.replace('N_HEIGHT', str(nHeight) )
 cudaCodeString = cudaCodeString.replace('N_DEPTH', str(nDepth) )
 cudaCodeString = cudaCodeString.replace( "THREADS_PER_BLOCK", str(nPointsBlock) )
-cudaCode = SourceModule(cudaCodeString)
+cudaCode = SourceModule(cudaCodeString, include_dirs=[currentDirectory])
 setBounderies_knl = cudaCode.get_function('setBounderies')
 setInterFlux_hll_knl = cudaCode.get_function('setInterFlux_hll')
 getInterFlux_hll_knl = cudaCode.get_function('getInterFlux_hll')
@@ -121,45 +124,48 @@ addDtoD_knl = cudaCode.get_function('addDtoD')
 convertToUCHAR = cudaCode.get_function('convertToUCHAR')
 reduction_min_kernel = cudaCode.get_function('reduction_min_kernel')
 reduction_max_kernel = cudaCode.get_function('reduction_max_kernel')
-# reduceDensity_kernel = cudaCode.get_function('reduceDensity' )
+reconstruct_PCM_knl = cudaCode.get_function('reconstruct_PCM' )
+solveRiemann_knl = cudaCode.get_function('solveRiemann' )
+setTimes_knl = cudaCode.get_function('setTimes')
+advanceConserved_knl = cudaCode.get_function('advanceConserved')
 
-########################################################################
-# convertToUCHAR_old = ElementwiseKernel(arguments="const int field, const int nCells, cudaP normaliztion, cudaP *values, unsigned char *psiUCHAR".replace("cudaP", cudaP),
-# 			      operation = "psiUCHAR[i] = (unsigned char) ( -255*( values[field*nCells + i]*normaliztion -1 ) );",
-# 			      name = "sendModuloToUCHAR_kernel")
-########################################################################
-# getTimeMin_kernel = ReductionKernel( np.dtype( cudaPre ),
-# 			    neutral = "1e6",
-# 			    arguments=" float delta, cudaP* cnsv_rho, cudaP* cnsv_vel, float* soundVel".replace("cudaP", cudaP),
-# 			    map_expr = " delta / ( abs( cnsv_vel[i]/ cnsv_rho[i] ) +  soundVel[i]   )    ",
-# 			    reduce_expr = "min(a,b)",
-# 			    name = "getTimeMin_kernel")
-###################################################
 def timeStepHydro():
   setBounderies_knl( np.int32(nCells), cnsv_d,
       bound_l_d, bound_r_d, bound_d_d, bound_u_d, bound_b_d, bound_t_d, grid=grid3D, block=block3D  )
 
+  setTimes_knl( np.int32(nCells), gamma, dx, dy, dz, cnsv_d, times_d, grid=grid3D, block=block3D )
+  dt = c0 * reduction_min( times_d, prePartialSum_d, partialSum_h, partialSum_d )
+
+  reconstruct_PCM_knl( np.int32(nCells), np.int32(nCells_b2), cnsv_d, recons_l, recons_r, grid=grid3D, block=block3D)
+
   for coord in [ 1, 2, 3]:
     if coord == 1:
-      bound_l_temp, bound_r_temp = bound_l_d, bound_r_d
-      iFlx_bound_temp = iFlx_bnd_r_d
+      iFlx_temp = iFlx_x_d
+      # bound_l_temp, bound_r_temp = bound_l_d, bound_r_d
+      # iFlx_bound_temp = iFlx_bnd_r_d
     if coord == 2:
-      bound_l_temp, bound_r_temp = bound_d_d, bound_u_d
-      iFlx_bound_temp = iFlx_bnd_u_d
-    if coord == 3: 
-      bound_l_temp, bound_r_temp = bound_b_d, bound_t_d
-      iFlx_bound_temp = iFlx_bnd_t_d
-    setInterFlux_hll_knl( np.int32( coord ), np.int32(nCells), gamma, dx, dy, dz,
-      cnsv_d, iFlx_d,
-      bound_l_temp, bound_r_temp,
-      iFlx_bound_temp, times_d,  grid=grid3D, block=block3D )
-    if coord == 1:
-      dt = c0 * reduction_min( times_d, prePartialSum_d, partialSum_h, partialSum_d )
-      # dt = c0 * gpuarray.min( times_d ).get()
-    getInterFlux_hll_knl( np.int32( coord ),  np.int32(nCells), cudaPre(dt), gamma, dx, dy, dz,
-        cnsv_adv_d, iFlx_d, iFlx_bound_temp, grid=grid3D, block=block3D )
-  addDtoD_knl( np.int32(nCells), cnsv_d, cnsv_adv_d, grid=grid3D, block=block3D)
+      iFlx_temp = iFlx_y_d
+      # bound_l_temp, bound_r_temp = bound_d_d, bound_u_d
+      # iFlx_bound_temp = iFlx_bnd_u_d
+    if coord == 3:
+      iFlx_temp = iFlx_z_d
+      # bound_l_temp, bound_r_temp = bound_b_d, bound_t_d
+      # iFlx_bound_temp = iFlx_bnd_t_d
 
+    solveRiemann_knl( np.int32( coord ), np.int32(nCells), np.int32(nCells_b1), np.int32(nCells_b2),
+      gamma, dx, dy, dz, recons_l, recons_r, iFlx_temp, grid=grid3D, block=block3D )
+
+  #   setInterFlux_hll_knl( np.int32( coord ), np.int32(nCells), gamma, dx, dy, dz,
+  #     cnsv_d, iFlx_d,
+  #     bound_l_temp, bound_r_temp,
+  #     iFlx_bound_temp, times_d,  grid=grid3D, block=block3D )
+  #
+  #   getInterFlux_hll_knl( np.int32( coord ),  np.int32(nCells), cudaPre(dt), gamma, dx, dy, dz,
+  #       cnsv_adv_d, iFlx_d, iFlx_bound_temp, grid=grid3D, block=block3D )
+  # addDtoD_knl( np.int32(nCells), cnsv_d, cnsv_adv_d, grid=grid3D, block=block3D)
+
+  advanceConserved_knl( np.int32(nCells), np.int32(nCells_b1),
+      cudaPre(dt), gamma, dx, dy, dz, cnsv_d, iFlx_x_d, iFlx_y_d, iFlx_z_d, grid=grid3D, block=block3D )
 
 def stepFuntion():
   # maxVal = ( gpuarray.max( cnsv1_d ) ).get()
@@ -212,32 +218,31 @@ cnsv4_h = rho * vz
 cnsv5_h = rho*v2/2. + p/(gamma-1)
 cnsv_h = np.array([ cnsv1_h, cnsv2_h, cnsv3_h, cnsv4_h, cnsv5_h ])
 #Arrays for bounderies
-ZEROS_HD, ZEROS_WD, ZEROS_WH = np.zeros( [ nHeight, nDepth ], dtype=cudaPre ), np.zeros( [ nWidth, nDepth ], dtype=cudaPre ), np.zeros( [ nWidth, nHeight ], dtype=cudaPre )
-ZEROS_HD_all, ZEROS_WD_all, ZEROS_WH_all = np.zeros( [ nFields, nHeight, nDepth ], dtype=cudaPre ), np.zeros( [ nFields, nWidth, nDepth ], dtype=cudaPre ), np.zeros( [ nFields, nWidth, nHeight ], dtype=cudaPre )
+ZEROS_HD, ZEROS_WD, ZEROS_WH = np.zeros( [ nFields, nHeight, nDepth ], dtype=cudaPre ), np.zeros( [ nFields, nWidth, nDepth ], dtype=cudaPre ), np.zeros( [ nFields, nWidth, nHeight ], dtype=cudaPre )
 bound_l_h = np.zeros_like( ZEROS_HD )
 bound_r_h = np.zeros_like( ZEROS_HD )
 bound_d_h = np.zeros_like( ZEROS_WD )
 bound_u_h = np.zeros_like( ZEROS_WD )
 bound_b_h = np.zeros_like( ZEROS_WH )
 bound_t_h = np.zeros_like( ZEROS_WH )
-bound_l_h_all = np.zeros_like( ZEROS_HD_all )
-bound_r_h_all = np.zeros_like( ZEROS_HD_all )
-bound_d_h_all = np.zeros_like( ZEROS_WD_all )
-bound_u_h_all = np.zeros_like( ZEROS_WD_all )
-bound_b_h_all = np.zeros_like( ZEROS_WH_all )
-bound_t_h_all = np.zeros_like( ZEROS_WH_all )
 #####################################################
 #Initialize device global data
 cnsv_d = gpuarray.to_gpu( cnsv_h )
-cnsv_adv_d = gpuarray.to_gpu( cnsv_h )
-ZEROS = np.zeros( X.shape, dtype=cudaPre )
-ZEROS_all = np.zeros( [nFields, nDepth, nHeight, nWidth], dtype=cudaPre )
+# cnsv_adv_d = gpuarray.to_gpu( cnsv_h )
+# ZEROS = np.zeros( X.shape, dtype=cudaPre )
+ZEROS_all   = np.zeros( [nFields, nDepth, nHeight, nWidth], dtype=cudaPre )
+ZEROS_GHOST = np.zeros( [nFields, nWidth+2*nGhost, nHeight+2*nGhost, nDepth+2*nGhost ], dtype=cudaPre )
+ZEROS_b2    = np.zeros( [nFields, nWidth+2, nHeight+2, nDepth+2 ], dtype=cudaPre )
 times_d = gpuarray.to_gpu( np.zeros( X.shape, dtype=cudaPre ) )
-iFlx_d = gpuarray.to_gpu( ZEROS_all )
-bound_l_d, bound_r_d = gpuarray.to_gpu( bound_l_h_all ), gpuarray.to_gpu( bound_r_h_all )
-bound_d_d, bound_u_d = gpuarray.to_gpu( bound_d_h_all ), gpuarray.to_gpu( bound_u_h_all )
-bound_b_d, bound_t_d = gpuarray.to_gpu( bound_b_h_all ), gpuarray.to_gpu( bound_t_h_all )
-iFlx_bnd_r_d, iFlx_bnd_u_d, iFlx_bnd_t_d = gpuarray.to_gpu( ZEROS_HD_all ), gpuarray.to_gpu( ZEROS_WD_all ), gpuarray.to_gpu( ZEROS_WH_all )
+# iFlx_d = gpuarray.to_gpu( ZEROS_all )
+iFlx_x_d = gpuarray.to_gpu( np.zeros( [nFields, nWidth+1, nHeight+1, nDepth+1 ], dtype=cudaPre ) )
+iFlx_y_d = gpuarray.to_gpu( np.zeros( [nFields, nWidth+1, nHeight+1, nDepth+1 ], dtype=cudaPre ) )
+iFlx_z_d = gpuarray.to_gpu( np.zeros( [nFields, nWidth+1, nHeight+1, nDepth+1 ], dtype=cudaPre ) )
+bound_l_d, bound_r_d = gpuarray.to_gpu( bound_l_h ), gpuarray.to_gpu( bound_r_h )
+bound_d_d, bound_u_d = gpuarray.to_gpu( bound_d_h ), gpuarray.to_gpu( bound_u_h )
+bound_b_d, bound_t_d = gpuarray.to_gpu( bound_b_h ), gpuarray.to_gpu( bound_t_h )
+recons_l, recons_r = gpuarray.to_gpu( ZEROS_b2 ), gpuarray.to_gpu( ZEROS_b2 )
+# iFlx_bnd_r_d, iFlx_bnd_u_d, iFlx_bnd_t_d = gpuarray.to_gpu( ZEROS_HD ), gpuarray.to_gpu( ZEROS_WD ), gpuarray.to_gpu( ZEROS_WH )
 #Arrays for reductions
 blockSize_reduc = 512
 gridSize_reduc = nCells / blockSize_reduc  / 2
@@ -279,73 +284,3 @@ outFileName = "hydro_data.h5"
 outFile = h5.File( outDir + outFileName, "w")
 print 'outDir: {0}'.format( outDir )
 outFile.close()
-#
-# #for i in range(500):
-#   #timeStepHydro()
-#   #if usingGravity: getGravForce()
-#
-#
-# #getGravForce()
-#
-# #plt.figure( 5 )
-# #phi =  phi_d.get()
-# #plt.imshow( phi[nDepth/2,:,:], extent=[xMin, xMax, yMin, yMax] )
-# #plt.colorbar()
-# ##plt.show()
-#
-# #plt.figure( 6 )
-# #forceX =  gForceX_d.get()
-# #forceY =  gForceY_d.get()
-# #forceZ =  gForceZ_d.get()
-# #force = np.sqrt( forceX*forceX + forceY*forceY + forceZ*forceZ )
-# #plt.imshow( force[nDepth/2,:,:], extent=[xMin, xMax, yMin, yMax] )
-# #plt.colorbar()
-#
-# #plt.figure( 7 )
-# #plt.plot( xPoints, phi[nDepth/2,nHeight/2, :] )
-#
-# #plt.figure( 8 )
-# #plt.plot( xPoints, forceX[nDepth/2,nHeight/2, :] )
-#
-#
-# #plt.show()
-#
-#
-#
-#
-#
-#
-#
-#
-#
-#
-#
-#
-#
-#
-#
-#
-#
-#
-#
-#
-#
-#
-#
-#
-#
-# #from mpl_toolkits.mplot3d import Axes3D
-#
-#
-#
-# #x = blockX_d.get()
-# #y = blockY_d.get()
-# #z = blockZ_d.get()
-#
-#
-# #fig = plt.figure()
-# #ax = fig.add_subplot(111, projection='3d')
-# #ax.scatter(x, y, z)
-# #plt.show()
-#
-#
