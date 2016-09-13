@@ -6,6 +6,7 @@
 
 #include "cuda_extras.cu"
 #include "cuda_bounderies.cu"
+#include "cuda_gravity.cu"
 
 
 extern "C"{   // ensure functions name to be exactly the same as below
@@ -37,6 +38,35 @@ __global__ void setTimes( const int nCells,
 	v2 = min( v2, dz / ( abs( vz ) + cs ) );
 	times[ tid ] = v2;
 }
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// __global__ void reconstruct_PLM( const int coord, const int nCells, const int nCells_b2,
+// 			double *cnsv, double *bound_l, double *bound_r,
+// 			double *recons_l, double *recons_r ){
+//   int t_j = blockIdx.x*blockDim.x + threadIdx.x;
+//   int t_i = blockIdx.y*blockDim.y + threadIdx.y;
+//   int t_k = blockIdx.z*blockDim.z + threadIdx.z;
+//   int tid = t_j + t_i*blockDim.x*gridDim.x + t_k*blockDim.x*gridDim.x*blockDim.y*gridDim.y;
+//
+// 	double rho_c, vx_c, vy_c, vz_c, E_c;
+// 	double rho_l, vx_l, vy_l, vz_l, E_l;
+//
+// 	//Load conserved values
+// 	rho_c = cnsv[ 0*nCells + tid ];
+// 	vx_c  = cnsv[ 1*nCells + tid ] / rho_c;
+// 	vy_c  = cnsv[ 2*nCells + tid ] / rho_c;
+// 	vz_c  = cnsv[ 3*nCells + tid ] / rho_c;
+// 	E_c   = cnsv[ 4*nCells + tid ];
+//
+// 	int tid_1;
+// 	//Load left values
+	// if ( coord==1 ) tid_1 = (t_j-1) + t_i*N_W + t_k*N_W*N_H+2;
+// 	if ( coord==2 ) tid_1 = t_j + (t_i-1)*N_W + t_k*N_W*N_H+2;
+// 	if ( coord==3 ) tid_1 = t_j + t_i*N_W + (t_k-1)*N_W*N_H+2;
+//
+// 	if
+// }
+
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 __global__ void reconstruct_PCM( const int nCells, const int nCells_b2,
@@ -83,7 +113,7 @@ __global__ void reconstruct_PCM( const int nCells, const int nCells_b2,
 	if ( t_j==1 ){
 		tid = (t_j-1) + t_i*(N_W+2) + t_k*(N_W+2)*(N_H+2);
 		recons_r[ 0*nCells_b2 + tid ] = rho_c;
-		recons_r[ 1*nCells_b2 + tid ] = mx_c;
+		recons_r[ 1*nCells_b2 + tid ] = -mx_c;
 		recons_r[ 2*nCells_b2 + tid ] = my_c;
 		recons_r[ 3*nCells_b2 + tid ] = mz_c;
 		recons_r[ 4*nCells_b2 + tid ] = E_c;
@@ -93,7 +123,7 @@ __global__ void reconstruct_PCM( const int nCells, const int nCells_b2,
 		tid = t_j + (t_i-1)*(N_W+2) + t_k*(N_W+2)*(N_H+2);
 		recons_r[ 0*nCells_b2 + tid ] = rho_c;
 		recons_r[ 1*nCells_b2 + tid ] = mx_c;
-		recons_r[ 2*nCells_b2 + tid ] = my_c;
+		recons_r[ 2*nCells_b2 + tid ] = -my_c;
 		recons_r[ 3*nCells_b2 + tid ] = mz_c;
 		recons_r[ 4*nCells_b2 + tid ] = E_c;
 	}
@@ -102,14 +132,14 @@ __global__ void reconstruct_PCM( const int nCells, const int nCells_b2,
 		recons_r[ 0*nCells_b2 + tid ] = rho_c;
 		recons_r[ 1*nCells_b2 + tid ] = mx_c;
 		recons_r[ 2*nCells_b2 + tid ] = my_c;
-		recons_r[ 3*nCells_b2 + tid ] = mz_c;
+		recons_r[ 3*nCells_b2 + tid ] = -mz_c;
 		recons_r[ 4*nCells_b2 + tid ] = E_c;
 	}
 
 	if ( t_j==N_W ){
 		tid = (t_j+1) + t_i*(N_W+2) + t_k*(N_W+2)*(N_H+2);
 		recons_l[ 0*nCells_b2 + tid ] = rho_c;
-		recons_l[ 1*nCells_b2 + tid ] = mx_c;
+		recons_l[ 1*nCells_b2 + tid ] = -mx_c;
 		recons_l[ 2*nCells_b2 + tid ] = my_c;
 		recons_l[ 3*nCells_b2 + tid ] = mz_c;
 		recons_l[ 4*nCells_b2 + tid ] = E_c;
@@ -119,7 +149,7 @@ __global__ void reconstruct_PCM( const int nCells, const int nCells_b2,
 		tid = t_j + (t_i+1)*(N_W+2) + t_k*(N_W+2)*(N_H+2);
 		recons_l[ 0*nCells_b2 + tid ] = rho_c;
 		recons_l[ 1*nCells_b2 + tid ] = mx_c;
-		recons_l[ 2*nCells_b2 + tid ] = my_c;
+		recons_l[ 2*nCells_b2 + tid ] = -my_c;
 		recons_l[ 3*nCells_b2 + tid ] = mz_c;
 		recons_l[ 4*nCells_b2 + tid ] = E_c;
 	}
@@ -129,7 +159,7 @@ __global__ void reconstruct_PCM( const int nCells, const int nCells_b2,
 		recons_l[ 0*nCells_b2 + tid ] = rho_c;
 		recons_l[ 1*nCells_b2 + tid ] = mx_c;
 		recons_l[ 2*nCells_b2 + tid ] = my_c;
-		recons_l[ 3*nCells_b2 + tid ] = mz_c;
+		recons_l[ 3*nCells_b2 + tid ] = -mz_c;
 		recons_l[ 4*nCells_b2 + tid ] = E_c;
 	}
 }
@@ -231,7 +261,8 @@ __global__ void solveRiemann( const int coord, const int nCells, const int nCell
   int t_j = blockIdx.x*blockDim.x + threadIdx.x;
   int t_i = blockIdx.y*blockDim.y + threadIdx.y;
   int t_k = blockIdx.z*blockDim.z + threadIdx.z;
-	int tid = t_j + t_i*blockDim.x*gridDim.x + t_k*blockDim.x*gridDim.x*blockDim.y*gridDim.y;
+	// int tid = t_j + t_i*blockDim.x*gridDim.x + t_k*blockDim.x*gridDim.x*blockDim.y*gridDim.y;
+	int tid_w = t_j + t_i*(N_W+1) + t_k*(N_W+1)*(N_H+1);
 
 	//Solve Riemann problem for left inter-cell;
 	//this is done for the left side of the center cell
@@ -285,19 +316,10 @@ __global__ void solveRiemann( const int coord, const int nCells, const int nCell
     s_p = max( vz_m + cs_m, vz_p + cs_p );
   }
 
-	t_j = blockIdx.x*blockDim.x + threadIdx.x;
-	t_i = blockIdx.y*blockDim.y + threadIdx.y;
-	t_k = blockIdx.z*blockDim.z + threadIdx.z;
-	tid = t_j + t_i*(N_W+1) + t_k*(N_W+1)*(N_H+1);
-	writeInterFlux( coord, nCells_b1, tid, rho_m, rho_p, vx_m, vx_p, vy_m, vy_p, vz_m, vz_p, E_m, E_p,
+	writeInterFlux( coord, nCells_b1, tid_w, rho_m, rho_p, vx_m, vx_p, vy_m, vy_p, vz_m, vz_p, E_m, E_p,
 					p_m, p_p, s_m, s_p, iFlx  );
 
 	//Get iFlux_r for most right cell
-	// if ( blockIdx.x!=(gridDim.x-1) || blockIdx.y!=(gridDim.y-1) || blockIdx.z!=(gridDim.z-1) ) return;
-	t_j += 1;
-	t_i += 1;
-	t_k += 1;
-
 	if ( coord == 1 ){
 		if ( t_j != N_W ) return;
 		t_j += 1;
@@ -349,11 +371,285 @@ __global__ void solveRiemann( const int coord, const int nCells, const int nCell
 	if ( coord == 1 ) t_j += 1;
 	if ( coord == 2 ) t_i += 1;
 	if ( coord == 3 ) t_k += 1;
-	tid = t_j + t_i*(N_W+1) + t_k*(N_W+1)*(N_H+1);
-	writeInterFlux( coord, nCells_b1, tid, rho_m, rho_p, vx_m, vx_p, vy_m, vy_p, vz_m, vz_p, E_m, E_p,
+	tid_w = t_j + t_i*(N_W+1) + t_k*(N_W+1)*(N_H+1);
+	writeInterFlux( coord, nCells_b1, tid_w, rho_m, rho_p, vx_m, vx_p, vy_m, vy_p, vz_m, vz_p, E_m, E_p,
 					p_m, p_p, s_m, s_p, iFlx  );
+}
+
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+__global__ void advanceTransverseFlux( const int coord,
+			const int nCells, const int nCells_b1, const int nCells_b2,
+			const double delta_1, const double delta_2,
+			double *recons_l, double *recons_r,
+			// double *recons_adv_l, double *recons_adv_r,
+			double *iFlx_1, double *iFlx_2 ){
+
+	int t_j = blockIdx.x*blockDim.x + threadIdx.x;
+	int t_i = blockIdx.y*blockDim.y + threadIdx.y;
+	int t_k = blockIdx.z*blockDim.z + threadIdx.z;
+
+	int tid_1, tid_2;
+	double dCnsv_1, dCnsv_2, dCnsv_3, dCnsv_4, dCnsv_5;
+
+  //Get the advance values for first transverse flux
+	tid_1 = t_j + t_i*(N_W+1) + t_k*(N_W+1)*(N_H+1);
+	dCnsv_1 = delta_1 * iFlx_1[0*nCells_b1 + tid_1];
+	dCnsv_2 = delta_1 * iFlx_1[1*nCells_b1 + tid_1];
+	dCnsv_3 = delta_1 * iFlx_1[2*nCells_b1 + tid_1];
+	dCnsv_4 = delta_1 * iFlx_1[3*nCells_b1 + tid_1];
+	dCnsv_5 = delta_1 * iFlx_1[4*nCells_b1 + tid_1];
+
+	if ( coord == 1 ) tid_2 = t_j + (t_i+1)*(N_W+1) + t_k*(N_W+1)*(N_H+1);
+	if ( coord == 2 ) tid_2 = t_j + t_i*(N_W+1) + (t_k+1)*(N_W+1)*(N_H+1);
+	if ( coord == 3 ) tid_2 = (t_j+1) + t_i*(N_W+1) + t_k*(N_W+1)*(N_H+1);
+	dCnsv_1 -= delta_1 * iFlx_1[0*nCells_b1 + tid_2];
+	dCnsv_2 -= delta_1 * iFlx_1[1*nCells_b1 + tid_2];
+	dCnsv_3 -= delta_1 * iFlx_1[2*nCells_b1 + tid_2];
+	dCnsv_4 -= delta_1 * iFlx_1[3*nCells_b1 + tid_2];
+	dCnsv_5 -= delta_1 * iFlx_1[4*nCells_b1 + tid_2];
+
+	//Get the advance values for second transverse flux
+	tid_1 = t_j + t_i*(N_W+1) + t_k*(N_W+1)*(N_H+1);
+	dCnsv_1 += delta_2 * iFlx_2[0*nCells_b1 + tid_1];
+	dCnsv_2 += delta_2 * iFlx_2[1*nCells_b1 + tid_1];
+	dCnsv_3 += delta_2 * iFlx_2[2*nCells_b1 + tid_1];
+	dCnsv_4 += delta_2 * iFlx_2[3*nCells_b1 + tid_1];
+	dCnsv_5 += delta_2 * iFlx_2[4*nCells_b1 + tid_1];
+
+	if ( coord == 1 ) tid_2 = t_j + t_i*(N_W+1) + (t_k+1)*(N_W+1)*(N_H+1);
+	if ( coord == 2 ) tid_2 = (t_j+1) + t_i*(N_W+1) + t_k*(N_W+1)*(N_H+1);
+	if ( coord == 3 ) tid_2 = t_j + (t_i+1)*(N_W+1) + t_k*(N_W+1)*(N_H+1);
+	dCnsv_1 -= delta_2 * iFlx_2[0*nCells_b1 + tid_2];
+	dCnsv_2 -= delta_2 * iFlx_2[1*nCells_b1 + tid_2];
+	dCnsv_3 -= delta_2 * iFlx_2[2*nCells_b1 + tid_2];
+	dCnsv_4 -= delta_2 * iFlx_2[3*nCells_b1 + tid_2];
+	dCnsv_5 -= delta_2 * iFlx_2[4*nCells_b1 + tid_2];
+
+	t_j += 1;
+	t_i += 1;
+	t_k += 1;
+	tid_1 = t_j + t_i*(N_W+2) + t_k*(N_W+2)*(N_H+2);
+	recons_l[0*nCells_b2 + tid_1] += dCnsv_1;
+	recons_l[1*nCells_b2 + tid_1] += dCnsv_2;
+	recons_l[2*nCells_b2 + tid_1] += dCnsv_3;
+	recons_l[3*nCells_b2 + tid_1] += dCnsv_4;
+	recons_l[4*nCells_b2 + tid_1] += dCnsv_5;
+	recons_r[0*nCells_b2 + tid_1] += dCnsv_1;
+	recons_r[1*nCells_b2 + tid_1] += dCnsv_2;
+	recons_r[2*nCells_b2 + tid_1] += dCnsv_3;
+	recons_r[3*nCells_b2 + tid_1] += dCnsv_4;
+	recons_r[4*nCells_b2 + tid_1] += dCnsv_5;
+}
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+__global__ void advanceConserved( const int nCells, const int nCells_b1,
+			const double dt,
+			const double dx, const double dy, const double dz,
+			double *cnsv, double *iFlx_x, double *iFlx_y, double *iFlx_z,
+			double* gForceX, double* gForceY, double* gForceZ, double* gravWork ){
+	int t_j = blockIdx.x*blockDim.x + threadIdx.x;
+	int t_i = blockIdx.y*blockDim.y + threadIdx.y;
+	int t_k = blockIdx.z*blockDim.z + threadIdx.z;
+	int tid = t_j + t_i*blockDim.x*gridDim.x + t_k*blockDim.x*gridDim.x*blockDim.y*gridDim.y;
+
+	double adv_1, adv_2, adv_3, adv_4, adv_5;
+	double delta;
+	adv_1 = cnsv[0*nCells + tid];
+	adv_2 = cnsv[1*nCells + tid];
+	adv_3 = cnsv[2*nCells + tid];
+	adv_4 = cnsv[3*nCells + tid];
+	adv_5 = cnsv[4*nCells + tid];
+
+	int tid_adj, tid_r;
+	double iFlx1_l, iFlx2_l, iFlx3_l, iFlx4_l, iFlx5_l;
+	double iFlx1_r, iFlx2_r, iFlx3_r, iFlx4_r, iFlx5_r;
+	//Read inter-cell fluxes
+	tid_r = t_j + t_i*(N_W+1) + t_k*(N_W+1)*(N_H+1);
+	//Flux in X axis
+	iFlx1_l = iFlx_x[0*nCells_b1 + tid_r ];
+	iFlx2_l = iFlx_x[1*nCells_b1 + tid_r ];
+	iFlx3_l = iFlx_x[2*nCells_b1 + tid_r ];
+	iFlx4_l = iFlx_x[3*nCells_b1 + tid_r ];
+	iFlx5_l = iFlx_x[4*nCells_b1 + tid_r ];
+
+	tid_adj = (t_j+1) + t_i*(N_W+1) + t_k*(N_W+1)*(N_H+1);
+	iFlx1_r = iFlx_x[0*nCells_b1 + tid_adj ];
+	iFlx2_r = iFlx_x[1*nCells_b1 + tid_adj ];
+	iFlx3_r = iFlx_x[2*nCells_b1 + tid_adj ];
+	iFlx4_r = iFlx_x[3*nCells_b1 + tid_adj ];
+	iFlx5_r = iFlx_x[4*nCells_b1 + tid_adj ];
+
+	delta = dt / dx;
+	adv_1 += delta*( iFlx1_l - iFlx1_r );
+	adv_2 += delta*( iFlx2_l - iFlx2_r );
+	adv_3 += delta*( iFlx3_l - iFlx3_r );
+	adv_4 += delta*( iFlx4_l - iFlx4_r );
+	adv_5 += delta*( iFlx5_l - iFlx5_r );
+
+	//Flux in Y axis
+	iFlx1_l = iFlx_y[0*nCells_b1 + tid_r ];
+	iFlx2_l = iFlx_y[1*nCells_b1 + tid_r ];
+	iFlx3_l = iFlx_y[2*nCells_b1 + tid_r ];
+	iFlx4_l = iFlx_y[3*nCells_b1 + tid_r ];
+	iFlx5_l = iFlx_y[4*nCells_b1 + tid_r ];
+
+	tid_adj = t_j + (t_i+1)*(N_W+1) + t_k*(N_W+1)*(N_H+1);
+	iFlx1_r = iFlx_y[0*nCells_b1 + tid_adj ];
+	iFlx2_r = iFlx_y[1*nCells_b1 + tid_adj ];
+	iFlx3_r = iFlx_y[2*nCells_b1 + tid_adj ];
+	iFlx4_r = iFlx_y[3*nCells_b1 + tid_adj ];
+	iFlx5_r = iFlx_y[4*nCells_b1 + tid_adj ];
+
+	delta = dt / dy;
+	adv_1 += delta*( iFlx1_l - iFlx1_r );
+	adv_2 += delta*( iFlx2_l - iFlx2_r );
+	adv_3 += delta*( iFlx3_l - iFlx3_r );
+	adv_4 += delta*( iFlx4_l - iFlx4_r );
+	adv_5 += delta*( iFlx5_l - iFlx5_r );
+
+	//Flux in Z axis
+	iFlx1_l = iFlx_z[0*nCells_b1 + tid_r ];
+	iFlx2_l = iFlx_z[1*nCells_b1 + tid_r ];
+	iFlx3_l = iFlx_z[2*nCells_b1 + tid_r ];
+	iFlx4_l = iFlx_z[3*nCells_b1 + tid_r ];
+	iFlx5_l = iFlx_z[4*nCells_b1 + tid_r ];
+
+	tid_adj = t_j + t_i*(N_W+1) + (t_k+1)*(N_W+1)*(N_H+1);
+	iFlx1_r = iFlx_z[0*nCells_b1 + tid_adj ];
+	iFlx2_r = iFlx_z[1*nCells_b1 + tid_adj ];
+	iFlx3_r = iFlx_z[2*nCells_b1 + tid_adj ];
+	iFlx4_r = iFlx_z[3*nCells_b1 + tid_adj ];
+	iFlx5_r = iFlx_z[4*nCells_b1 + tid_adj ];
+
+	delta = dt / dz;
+	adv_1 += delta*( iFlx1_l - iFlx1_r );
+	adv_2 += delta*( iFlx2_l - iFlx2_r );
+	adv_3 += delta*( iFlx3_l - iFlx3_r );
+	adv_4 += delta*( iFlx4_l - iFlx4_r );
+	adv_5 += delta*( iFlx5_l - iFlx5_r );
+
+	//Update values
+	// cnsv[0*nCells + tid] = adv_1;
+	// cnsv[1*nCells + tid] = adv_2;
+	// cnsv[2*nCells + tid] = adv_3;
+	// cnsv[3*nCells + tid] = adv_4;
+	// cnsv[4*nCells + tid] = adv_5;
+	//
+	cnsv[0*nCells + tid] = adv_1;
+	cnsv[1*nCells + tid] = adv_2 + dt*gForceX[tid];
+	cnsv[2*nCells + tid] = adv_3 + dt*gForceY[tid];
+	cnsv[3*nCells + tid] = adv_4 + dt*gForceZ[tid];
+	cnsv[4*nCells + tid] = adv_5 + dt*gravWork[tid];
+
+}
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 
+
+__global__ void getInterFlux_hll( const int coord, const int nCells, const double dt,  const double gamma,
+			 const double dx, const double dy, const double dz,
+			 double *cnsv_adv, double *iFlx, double *iFlx_bnd ){
+			 //  double* gForceX, double* gForceY, double* gForceZ, double* gravWork ){
+	int t_j = blockIdx.x*blockDim.x + threadIdx.x;
+	int t_i = blockIdx.y*blockDim.y + threadIdx.y;
+	int t_k = blockIdx.z*blockDim.z + threadIdx.z;
+	int tid = t_j + t_i*blockDim.x*gridDim.x + t_k*blockDim.x*gridDim.x*blockDim.y*gridDim.y;
+
+	int tid_adj, boundId, stride;
+	double iFlx1_l, iFlx2_l, iFlx3_l, iFlx4_l, iFlx5_l;
+	double iFlx1_r, iFlx2_r, iFlx3_r, iFlx4_r, iFlx5_r;
+	double delta;
+
+	//Set adjacent id
+	if ( coord == 1 ){
+		if ( t_j == N_W-1 ) tid_adj = (t_j) + t_i*blockDim.x*gridDim.x + t_k*blockDim.x*gridDim.x*blockDim.y*gridDim.y;
+		else tid_adj = (t_j+1) + t_i*blockDim.x*gridDim.x + t_k*blockDim.x*gridDim.x*blockDim.y*gridDim.y;
+		delta = dt / dx ;
+	}
+	if ( coord == 2 ){
+		if ( t_i == N_H-1 ) tid_adj = t_j + (t_i)*blockDim.x*gridDim.x + t_k*blockDim.x*gridDim.x*blockDim.y*gridDim.y;
+		else tid_adj = t_j + (t_i+1)*blockDim.x*gridDim.x + t_k*blockDim.x*gridDim.x*blockDim.y*gridDim.y;
+		delta = dt / dy;
+	}
+	if ( coord == 3 ){
+		if ( t_k == N_D-1) tid_adj = t_j + t_i*blockDim.x*gridDim.x + (t_k)*blockDim.x*gridDim.x*blockDim.y*gridDim.y;
+		else tid_adj = t_j + t_i*blockDim.x*gridDim.x + (t_k+1)*blockDim.x*gridDim.x*blockDim.y*gridDim.y;
+		delta = dt / dz;
+	}
+
+	//Read inter-cell fluxes
+	iFlx1_l = iFlx[0*nCells + tid ];
+	iFlx1_r = iFlx[0*nCells + tid_adj ];
+
+	iFlx2_l = iFlx[1*nCells + tid ];
+	iFlx2_r = iFlx[1*nCells + tid_adj ];
+
+	iFlx3_l = iFlx[2*nCells + tid ];
+	iFlx3_r = iFlx[2*nCells + tid_adj ];
+
+	iFlx4_l = iFlx[3*nCells + tid ];
+	iFlx4_r = iFlx[3*nCells + tid_adj ];
+
+	iFlx5_l = iFlx[4*nCells + tid ];
+	iFlx5_r = iFlx[4*nCells + tid_adj ];
+
+	if ( coord == 1 ){
+		boundId = t_i + t_k*N_H;
+		stride = N_H*N_D;
+		if ( t_j == (N_W-1) ) {
+			iFlx1_r = iFlx_bnd[0*stride + boundId];
+			iFlx2_r = iFlx_bnd[1*stride + boundId];
+			iFlx3_r = iFlx_bnd[2*stride + boundId];
+			iFlx4_r = iFlx_bnd[3*stride + boundId];
+			iFlx5_r = iFlx_bnd[4*stride + boundId];
+		}
+	}
+	if ( coord == 2 ){
+		boundId = t_j + t_k*N_W;
+		stride = N_W*N_D;
+		if ( t_i == (N_H-1) ) {
+			iFlx1_r = iFlx_bnd[0*stride + boundId];
+			iFlx2_r = iFlx_bnd[1*stride + boundId];
+			iFlx3_r = iFlx_bnd[2*stride + boundId];
+			iFlx4_r = iFlx_bnd[3*stride + boundId];
+			iFlx5_r = iFlx_bnd[4*stride + boundId];
+		}
+	}
+	if ( coord == 3 ){
+		boundId = t_j + t_i*N_W;
+		stride = N_W*N_H;
+		if ( t_k == (N_D-1) ) {
+			iFlx1_r = iFlx_bnd[0*stride + boundId];
+			iFlx2_r = iFlx_bnd[1*stride + boundId];
+			iFlx3_r = iFlx_bnd[2*stride + boundId];
+			iFlx4_r = iFlx_bnd[3*stride + boundId];
+			iFlx5_r = iFlx_bnd[4*stride + boundId];
+		}
+	}
+
+	//Advance the consv values
+	// cnsv_1[ tid ] = cnsv_1[ tid ] - delta*( iFlx1_r - iFlx1_l );
+	// cnsv_2[ tid ] = cnsv_2[ tid ] - delta*( iFlx2_r - iFlx2_l ) + dt*gForceX[tid]*50;
+	// cnsv_3[ tid ] = cnsv_3[ tid ] - delta*( iFlx3_r - iFlx3_l ) + dt*gForceY[tid]*50;
+	// cnsv_4[ tid ] = cnsv_4[ tid ] - delta*( iFlx4_r - iFlx4_l ) + dt*gForceZ[tid]*50;
+	// cnsv_5[ tid ] = cnsv_5[ tid ] - delta*( iFlx5_r - iFlx5_l ) + dt*gravWork[tid]*50;
+
+	if ( coord == 1 ){
+		cnsv_adv[0*nCells +  tid ] = delta*( iFlx1_l - iFlx1_r );
+		cnsv_adv[1*nCells +  tid ] = delta*( iFlx2_l - iFlx2_r );
+		cnsv_adv[2*nCells +  tid ] = delta*( iFlx3_l - iFlx3_r );
+		cnsv_adv[3*nCells +  tid ] = delta*( iFlx4_l - iFlx4_r );
+		cnsv_adv[4*nCells +  tid ] = delta*( iFlx5_l - iFlx5_r );
+	}
+	else{
+		cnsv_adv[0*nCells +  tid ] += delta*( iFlx1_l - iFlx1_r );
+		cnsv_adv[1*nCells +  tid ] += delta*( iFlx2_l - iFlx2_r );
+		cnsv_adv[2*nCells +  tid ] += delta*( iFlx3_l - iFlx3_r );
+		cnsv_adv[3*nCells +  tid ] += delta*( iFlx4_l - iFlx4_r );
+		cnsv_adv[4*nCells +  tid ] += delta*( iFlx5_l - iFlx5_r );
+	}
 }
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -537,212 +833,6 @@ __global__ void setInterFlux_hll( const int coord, const int nCells, const doubl
   // writeInterFlux_b( coord, boundId, rho_l, rho_c, vx_l, vx_c, vy_l, vy_c, vz_l, vz_c, E_l, E_c,
   //         p_l, p_c, s_l, s_c, iFlx, iFlx_1_bnd, iFlx_2_bnd, iFlx_3_bnd, iFlx_4_bnd, iFlx_5_bnd  );
 }
-///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-__global__ void advanceConserved( const int nCells, const int nCells_b1,
-			const double dt,  const double gamma,
-			const double dx, const double dy, const double dz,
-			double *cnsv, double *iFlx_x, double *iFlx_y, double *iFlx_z ){
-			 //  double* gForceX, double* gForceY, double* gForceZ, double* gravWork ){
-	int t_j = blockIdx.x*blockDim.x + threadIdx.x;
-	int t_i = blockIdx.y*blockDim.y + threadIdx.y;
-	int t_k = blockIdx.z*blockDim.z + threadIdx.z;
-	int tid = t_j + t_i*blockDim.x*gridDim.x + t_k*blockDim.x*gridDim.x*blockDim.y*gridDim.y;
-
-
-	double adv_1, adv_2, adv_3, adv_4, adv_5;
-	double delta;
-	adv_1 = cnsv[0*nCells + tid];
-	adv_2 = cnsv[1*nCells + tid];
-	adv_3 = cnsv[2*nCells + tid];
-	adv_4 = cnsv[3*nCells + tid];
-	adv_5 = cnsv[4*nCells + tid];
-
-	int tid_adj, tid_r;
-	double iFlx1_l, iFlx2_l, iFlx3_l, iFlx4_l, iFlx5_l;
-	double iFlx1_r, iFlx2_r, iFlx3_r, iFlx4_r, iFlx5_r;
-	//Read inter-cell fluxes
-	tid_r = t_j + t_i*(N_W+1) + t_k*(N_W+1)*(N_H+1);
-	//Flux in X axis
-	iFlx1_l = iFlx_x[0*nCells_b1 + tid_r ];
-	iFlx2_l = iFlx_x[1*nCells_b1 + tid_r ];
-	iFlx3_l = iFlx_x[2*nCells_b1 + tid_r ];
-	iFlx4_l = iFlx_x[3*nCells_b1 + tid_r ];
-	iFlx5_l = iFlx_x[4*nCells_b1 + tid_r ];
-
-	tid_adj = (t_j+1) + t_i*(N_W+1) + t_k*(N_W+1)*(N_H+1);
-	iFlx1_r = iFlx_x[0*nCells_b1 + tid_adj ];
-	iFlx2_r = iFlx_x[1*nCells_b1 + tid_adj ];
-	iFlx3_r = iFlx_x[2*nCells_b1 + tid_adj ];
-	iFlx4_r = iFlx_x[3*nCells_b1 + tid_adj ];
-	iFlx5_r = iFlx_x[4*nCells_b1 + tid_adj ];
-
-	delta = dt / dx;
-	adv_1 += delta*( iFlx1_l - iFlx1_r );
-	adv_2 += delta*( iFlx2_l - iFlx2_r );
-	adv_3 += delta*( iFlx3_l - iFlx3_r );
-	adv_4 += delta*( iFlx4_l - iFlx4_r );
-	adv_5 += delta*( iFlx5_l - iFlx5_r );
-
-	//Flux in Y axis
-	iFlx1_l = iFlx_y[0*nCells_b1 + tid_r ];
-	iFlx2_l = iFlx_y[1*nCells_b1 + tid_r ];
-	iFlx3_l = iFlx_y[2*nCells_b1 + tid_r ];
-	iFlx4_l = iFlx_y[3*nCells_b1 + tid_r ];
-	iFlx5_l = iFlx_y[4*nCells_b1 + tid_r ];
-
-	tid_adj = t_j + (t_i+1)*(N_W+1) + t_k*(N_W+1)*(N_H+1);
-	iFlx1_r = iFlx_y[0*nCells_b1 + tid_adj ];
-	iFlx2_r = iFlx_y[1*nCells_b1 + tid_adj ];
-	iFlx3_r = iFlx_y[2*nCells_b1 + tid_adj ];
-	iFlx4_r = iFlx_y[3*nCells_b1 + tid_adj ];
-	iFlx5_r = iFlx_y[4*nCells_b1 + tid_adj ];
-
-	delta = dt / dy;
-	adv_1 += delta*( iFlx1_l - iFlx1_r );
-	adv_2 += delta*( iFlx2_l - iFlx2_r );
-	adv_3 += delta*( iFlx3_l - iFlx3_r );
-	adv_4 += delta*( iFlx4_l - iFlx4_r );
-	adv_5 += delta*( iFlx5_l - iFlx5_r );
-
-	//Flux in Z axis
-	iFlx1_l = iFlx_z[0*nCells_b1 + tid_r ];
-	iFlx2_l = iFlx_z[1*nCells_b1 + tid_r ];
-	iFlx3_l = iFlx_z[2*nCells_b1 + tid_r ];
-	iFlx4_l = iFlx_z[3*nCells_b1 + tid_r ];
-	iFlx5_l = iFlx_z[4*nCells_b1 + tid_r ];
-
-	tid_adj = t_j + t_i*(N_W+1) + (t_k+1)*(N_W+1)*(N_H+1);
-	iFlx1_r = iFlx_z[0*nCells_b1 + tid_adj ];
-	iFlx2_r = iFlx_z[1*nCells_b1 + tid_adj ];
-	iFlx3_r = iFlx_z[2*nCells_b1 + tid_adj ];
-	iFlx4_r = iFlx_z[3*nCells_b1 + tid_adj ];
-	iFlx5_r = iFlx_z[4*nCells_b1 + tid_adj ];
-
-	delta = dt / dz;
-	adv_1 += delta*( iFlx1_l - iFlx1_r );
-	adv_2 += delta*( iFlx2_l - iFlx2_r );
-	adv_3 += delta*( iFlx3_l - iFlx3_r );
-	adv_4 += delta*( iFlx4_l - iFlx4_r );
-	adv_5 += delta*( iFlx5_l - iFlx5_r );
-
-	//Update values
-	cnsv[0*nCells + tid] = adv_1;
-	cnsv[1*nCells + tid] = adv_2;
-	cnsv[2*nCells + tid] = adv_3;
-	cnsv[3*nCells + tid] = adv_4;
-	cnsv[4*nCells + tid] = adv_5;
-
-}
-///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-
-
-
-__global__ void getInterFlux_hll( const int coord, const int nCells, const double dt,  const double gamma,
-			 const double dx, const double dy, const double dz,
-			 double *cnsv_adv, double *iFlx, double *iFlx_bnd ){
-			 //  double* gForceX, double* gForceY, double* gForceZ, double* gravWork ){
-	int t_j = blockIdx.x*blockDim.x + threadIdx.x;
-	int t_i = blockIdx.y*blockDim.y + threadIdx.y;
-	int t_k = blockIdx.z*blockDim.z + threadIdx.z;
-	int tid = t_j + t_i*blockDim.x*gridDim.x + t_k*blockDim.x*gridDim.x*blockDim.y*gridDim.y;
-
-	int tid_adj, boundId, stride;
-	double iFlx1_l, iFlx2_l, iFlx3_l, iFlx4_l, iFlx5_l;
-	double iFlx1_r, iFlx2_r, iFlx3_r, iFlx4_r, iFlx5_r;
-	double delta;
-
-	//Set adjacent id
-	if ( coord == 1 ){
-		if ( t_j == N_W-1 ) tid_adj = (t_j) + t_i*blockDim.x*gridDim.x + t_k*blockDim.x*gridDim.x*blockDim.y*gridDim.y;
-		else tid_adj = (t_j+1) + t_i*blockDim.x*gridDim.x + t_k*blockDim.x*gridDim.x*blockDim.y*gridDim.y;
-		delta = dt / dx ;
-	}
-	if ( coord == 2 ){
-		if ( t_i == N_H-1 ) tid_adj = t_j + (t_i)*blockDim.x*gridDim.x + t_k*blockDim.x*gridDim.x*blockDim.y*gridDim.y;
-		else tid_adj = t_j + (t_i+1)*blockDim.x*gridDim.x + t_k*blockDim.x*gridDim.x*blockDim.y*gridDim.y;
-		delta = dt / dy;
-	}
-	if ( coord == 3 ){
-		if ( t_k == N_D-1) tid_adj = t_j + t_i*blockDim.x*gridDim.x + (t_k)*blockDim.x*gridDim.x*blockDim.y*gridDim.y;
-		else tid_adj = t_j + t_i*blockDim.x*gridDim.x + (t_k+1)*blockDim.x*gridDim.x*blockDim.y*gridDim.y;
-		delta = dt / dz;
-	}
-
-	//Read inter-cell fluxes
-	iFlx1_l = iFlx[0*nCells + tid ];
-	iFlx1_r = iFlx[0*nCells + tid_adj ];
-
-	iFlx2_l = iFlx[1*nCells + tid ];
-	iFlx2_r = iFlx[1*nCells + tid_adj ];
-
-	iFlx3_l = iFlx[2*nCells + tid ];
-	iFlx3_r = iFlx[2*nCells + tid_adj ];
-
-	iFlx4_l = iFlx[3*nCells + tid ];
-	iFlx4_r = iFlx[3*nCells + tid_adj ];
-
-	iFlx5_l = iFlx[4*nCells + tid ];
-	iFlx5_r = iFlx[4*nCells + tid_adj ];
-
-	if ( coord == 1 ){
-		boundId = t_i + t_k*N_H;
-		stride = N_H*N_D;
-		if ( t_j == (N_W-1) ) {
-			iFlx1_r = iFlx_bnd[0*stride + boundId];
-			iFlx2_r = iFlx_bnd[1*stride + boundId];
-			iFlx3_r = iFlx_bnd[2*stride + boundId];
-			iFlx4_r = iFlx_bnd[3*stride + boundId];
-			iFlx5_r = iFlx_bnd[4*stride + boundId];
-		}
-	}
-	if ( coord == 2 ){
-		boundId = t_j + t_k*N_W;
-		stride = N_W*N_D;
-		if ( t_i == (N_H-1) ) {
-			iFlx1_r = iFlx_bnd[0*stride + boundId];
-			iFlx2_r = iFlx_bnd[1*stride + boundId];
-			iFlx3_r = iFlx_bnd[2*stride + boundId];
-			iFlx4_r = iFlx_bnd[3*stride + boundId];
-			iFlx5_r = iFlx_bnd[4*stride + boundId];
-		}
-	}
-	if ( coord == 3 ){
-		boundId = t_j + t_i*N_W;
-		stride = N_W*N_H;
-		if ( t_k == (N_D-1) ) {
-			iFlx1_r = iFlx_bnd[0*stride + boundId];
-			iFlx2_r = iFlx_bnd[1*stride + boundId];
-			iFlx3_r = iFlx_bnd[2*stride + boundId];
-			iFlx4_r = iFlx_bnd[3*stride + boundId];
-			iFlx5_r = iFlx_bnd[4*stride + boundId];
-		}
-	}
-
-	//Advance the consv values
-	// cnsv_1[ tid ] = cnsv_1[ tid ] - delta*( iFlx1_r - iFlx1_l );
-	// cnsv_2[ tid ] = cnsv_2[ tid ] - delta*( iFlx2_r - iFlx2_l ) + dt*gForceX[tid]*50;
-	// cnsv_3[ tid ] = cnsv_3[ tid ] - delta*( iFlx3_r - iFlx3_l ) + dt*gForceY[tid]*50;
-	// cnsv_4[ tid ] = cnsv_4[ tid ] - delta*( iFlx4_r - iFlx4_l ) + dt*gForceZ[tid]*50;
-	// cnsv_5[ tid ] = cnsv_5[ tid ] - delta*( iFlx5_r - iFlx5_l ) + dt*gravWork[tid]*50;
-
-	if ( coord == 1 ){
-		cnsv_adv[0*nCells +  tid ] = delta*( iFlx1_l - iFlx1_r );
-		cnsv_adv[1*nCells +  tid ] = delta*( iFlx2_l - iFlx2_r );
-		cnsv_adv[2*nCells +  tid ] = delta*( iFlx3_l - iFlx3_r );
-		cnsv_adv[3*nCells +  tid ] = delta*( iFlx4_l - iFlx4_r );
-		cnsv_adv[4*nCells +  tid ] = delta*( iFlx5_l - iFlx5_r );
-	}
-	else{
-		cnsv_adv[0*nCells +  tid ] += delta*( iFlx1_l - iFlx1_r );
-		cnsv_adv[1*nCells +  tid ] += delta*( iFlx2_l - iFlx2_r );
-		cnsv_adv[2*nCells +  tid ] += delta*( iFlx3_l - iFlx3_r );
-		cnsv_adv[3*nCells +  tid ] += delta*( iFlx4_l - iFlx4_r );
-		cnsv_adv[4*nCells +  tid ] += delta*( iFlx5_l - iFlx5_r );
-	}
-}
-
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -1119,53 +1209,7 @@ __global__ void addDtoD( const int nCells,
 //
 // }
 //
-// __global__ void getGravityForce( const int nWidth, const int nHeight, const int nDepth,
-// 				 cudaP dx, cudaP dy, cudaP dz,
-// 				 cudaP* gForce_x, cudaP* gForce_y, cudaP* gForce_z,
-// 				 cudaP* rho, cudaP* pX, cudaP* pY, cudaP* pZ, cudaP *gravWork,
-// 				 float* phiWall      ){
-//   int t_j = blockIdx.x*blockDim.x + threadIdx.x;
-//   int t_i = blockIdx.y*blockDim.y + threadIdx.y;
-//   int t_k = blockIdx.z*blockDim.z + threadIdx.z;
-//   int tid = t_j + t_i*blockDim.x*gridDim.x + t_k*blockDim.x*gridDim.x*blockDim.y*gridDim.y;
-//
-//   cudaP phi_l, phi_r, phi_d, phi_u, phi_b, phi_t;
-// //   phi_c = fp_tex3D( tex_1, t_j, t_i, t_k);
-//   phi_l = fp_tex3D( tex_1, t_j-1, t_i, t_k);
-//   phi_r = fp_tex3D( tex_1, t_j+1, t_i, t_k);
-//   phi_d = fp_tex3D( tex_1, t_j, t_i-1, t_k);
-//   phi_u = fp_tex3D( tex_1, t_j, t_i+1, t_k);
-//   phi_b = fp_tex3D( tex_1, t_j, t_i, t_k-1);
-//   phi_t = fp_tex3D( tex_1, t_j, t_i, t_k+1);
-//
-//   //Boundary conditions
-//   if  ( t_j == 0 )        phi_l = phi_r;
-//   if  ( t_j == nWidth-1 ) phi_r = phi_l;
-//   if  ( t_i == 0 )        phi_d = phi_u;
-//   if  ( t_i == nWidth-1 ) phi_u = phi_d;
-//   if  ( t_k == 0 )        phi_b = phi_t;
-//   if  ( t_k == nWidth-1 ) phi_t = phi_b;
-//
-//   //Get partial derivatives for force
-//   cudaP gField_x, gField_y, gField_z, p_x, p_y, p_z, rho_c;
-//   rho_c = rho[ tid ];
-//   gField_x = ( phi_l - phi_r ) * 0.5 / dx;
-//   gField_y = ( phi_d - phi_u ) * 0.5 / dy;
-//   gField_z = ( phi_b - phi_t ) * 0.5 / dz;
-//   gForce_x[ tid ] = gField_x * rho_c;
-//   gForce_y[ tid ] = gField_y * rho_c;
-//   gForce_z[ tid ] = gField_z * rho_c;
-// //   gForce_x[ tid ] = gField_x;
-// //   gForce_y[ tid ] = gField_y;
-// //   gForce_z[ tid ] = gField_z;
-//
-//   //Get momentum for virtual gravitational work
-//   p_x = pX[ tid ] ;
-//   p_y = pY[ tid ] ;
-//   p_z = pZ[ tid ] ;
-//   gravWork[ tid ] = p_x * gField_x + p_y * gField_y + p_z * gField_z ;
-//
-// }
+
 //
 // __global__ void reduceDensity( const int nWidth, const int nHeight, const int nDepth,
 // 			       const float dx, const float dy, const float dz,
