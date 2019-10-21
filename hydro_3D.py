@@ -26,8 +26,12 @@ useDevice = None
 usingAnimation = False
 showKernelMemInfo = False
 usingGravity = False
+usingTheoGrav = False
+usingFFT = False
 
 for option in sys.argv:
+  if option == "fft": usingFFT = True
+  if option == "theo": usingTheoGrav = True
   if option == "grav": usingGravity = True
   if option == "float": cudaP = "float"
   if option == "anim": usingAnimation = True
@@ -84,7 +88,7 @@ pi4 = cudaPre( 4*np.pi )
 
 #Initialize openGL
 if usingAnimation:
-  import volumeRender
+  import volumeRender_old as volumeRender
   volumeRender.nWidth = nWidth
   volumeRender.nHeight = nHeight
   volumeRender.nDepth = nDepth
@@ -132,13 +136,13 @@ solveRiemann_knl = cudaCode.get_function('solveRiemann' )
 setTimes_knl = cudaCode.get_function('setTimes')
 advanceConserved_knl = cudaCode.get_function('advanceConserved')
 advanceTransverseFlux_knl = cudaCode.get_function('advanceTransverseFlux')
-# gravityCodeFile = open("cuda_gravity_3D.cu","r")
-# cudaCodeString = gravityCodeFile.read().replace( "cudaP", cudaP )
-# cudaCodeString = cudaCodeString.replace('N_WIDTH', str(nWidth) )
-# cudaCodeString = cudaCodeString.replace('N_HEIGHT', str(nHeight) )
-# cudaCodeString = cudaCodeString.replace('N_DEPTH', str(nDepth) )
-# cudaCodeString = cudaCodeString.replace( "THREADS_PER_BLOCK", str(TperB) )
-# cudaCode = SourceModule(cudaCodeString, include_dirs=[currentDirectory])
+gravityCodeFile = open("cuda_gravity.cu","r")
+cudaCodeString = gravityCodeFile.read().replace( "cudaP", cudaP )
+cudaCodeString = cudaCodeString.replace('N_WIDTH', str(nWidth) )
+cudaCodeString = cudaCodeString.replace('N_HEIGHT', str(nHeight) )
+cudaCodeString = cudaCodeString.replace('N_DEPTH', str(nDepth) )
+cudaCodeString = cudaCodeString.replace( "THREADS_PER_BLOCK", str(TperB) )
+cudaCode = SourceModule(cudaCodeString, include_dirs=[currentDirectory])
 iterPoissonStep_knl = cudaCode.get_function('iterPoissonStep')
 getGravityForce_knl = cudaCode.get_function('getGravityForce')
 copyDensity_knl = cudaCode.get_function('copyDensity')
@@ -158,7 +162,7 @@ def poissonMultiStep( omega, nStepsPerIter, convEpsilon ):
   hasConverged = converged_d.get()[0]
   return hasConverged
 
-nStepsPerIter = 1
+nStepsPerIter = 3
 def solvePoisson( convEpsilon, copy=False, show=False ):
   maxIter = 50000
   omega = np.float64( 2. / ( 1 + np.pi / nWidth  ) )
@@ -168,7 +172,11 @@ def solvePoisson( convEpsilon, copy=False, show=False ):
     hasConverged = poissonMultiStep( omega, nStepsPerIter, convEpsilon )
     if hasConverged == 1:
       if show: print ' Poisson converged: {0}'.format( (n+1)*nStepsPerIter )
-      if copy: return phi_d.get()
+      if copy:
+        phi_1 = phi_d.get()
+        poissonHalfStep( 0, omega, convEpsilon )
+        phi_2 = phi_d.get()
+        return ( phi_1 + phi_2 )/2
       else: return
   if show: print 'Poisson NOT-converged\n'
   return phi_d.get()
@@ -177,10 +185,11 @@ def getGravityForce():
   getGravityForce_knl( np.int32(nCells), np.int32(nWidth), np.int32(nHeight), np.int32(nDepth),
   dx, dy, dz, gForceX_d, gForceY_d, gForceZ_d, cnsv_d, phi_d, gravWork_d, block=block3D, grid=grid3D  )
 
-def solveGravity( convEpsilon ):
+def solveGravity( convEpsilon, show=False ):
   global time_grav, start_grav, end_grav
   start_grav.record()
-  solvePoisson( convEpsilon, show=True)
+  if usingFFT: solvePoisson_FFT()
+  else: solvePoisson( convEpsilon, show=show)
   getGravityForce()
   end_grav.record(), end_grav.synchronize()
   time_grav += start_grav.time_till( end_grav )*1e-3
@@ -194,6 +203,7 @@ def timeStepHydro( convEpsilon ):
   setTimes_knl( np.int32(nCells), gamma, dx, dy, dz, cnsv_d, times_d, grid=grid3D, block=block3D )
   # dt = c0 * reduction_min( times_d, prePartialSum_d, partialSum_h, partialSum_d )
   dt = c0 * gpuarray.min(times_d).get()
+  print dt
 
   for coord in [ 1, 2, 3]:
     if coord == 1:
@@ -268,11 +278,11 @@ def stepFuntion():
 if showKernelMemInfo:
   #kernelMemoryInfo( setFlux_kernel, 'setFlux_kernel')
   #print ""
-  kernelMemoryInfo( setInterFlux_hll_kernel, 'setInterFlux_hll_kernel')
+  # kernelMemoryInfo( setInterFlux_hll_kernel, 'setInterFlux_hll_kernel')
+  # print ""
+  # kernelMemoryInfo( getInterFlux_hll_kernel, 'getInterFlux_hll_kernel')
   print ""
-  kernelMemoryInfo( getInterFlux_hll_kernel, 'getInterFlux_hll_kernel')
-  print ""
-  kernelMemoryInfo( iterPoissonStep_kernel, 'iterPoissonStep_kernel')
+  kernelMemoryInfo( iterPoissonStep_knl, 'iterPoissonStep_kernel')
   print ""
   kernelMemoryInfo( getBounderyPotential_kernel, 'getBounderyPotential_kernel')
   print ""
@@ -299,7 +309,16 @@ p[ overPresure ] = overPresureVal
 p[ np.logical_not(overPresure) ] = 1
 v2 = vx*vx + vy*vy + vz*vz
 #####################################################
+#For analitical solution of the poisson equation
+sigma = 0.2
+deltaX, deltaY = 0., 0.
+r2 = (X-deltaX)**2 + (Y-deltaY)**2
+rho_theo = ( r2 - 2*sigma**2 )/sigma**4 * np.exp( -r2/(2*sigma**2) )
+phi_theo = 4*np.pi*np.exp( -r2/(2*sigma**2) )
+#####################################################
 #Initialize conserved values
+if usingTheoGrav:
+  rho = rho_theo.astype( np.float64 )           #ANALITICAL POISSON
 cnsv1_h = rho
 cnsv2_h = rho * vx
 cnsv3_h = rho * vy
@@ -400,27 +419,32 @@ start_grav, end_grav = cuda.Event(), cuda.Event()
 time_hydro = 0
 time_grav  = 0
 
-# if usingGravity:
-#   print 'Making FFT 3D plan'
-#   fft_plan = Plan( (nDepth, nHeight, nWidth), dtype=np.float64 )
-#   print 'Getting initial gravity force by FFT'
-#   start_grav.record()
-#   copyDensity_knl( cnsv_d, rho_d, grid=grid3D, block=block3D )
-#   fft_plan.execute( rho_d, rho_imag_d )
-#   FFT_divideK2_knl( fftKx_d, fftKy_d, fftKz_d, rho_d, rho_imag_d, grid=grid3D, block=block3D )
-#   fft_plan.execute( rho_d, rho_imag_d, inverse=True )
-#   phi_fft_re = rho_d.get()
-#   phi_fft_im = rho_imag_d.get()
-#   end_grav.record(), end.synchronize()
-#   secs = start_grav.time_till( end_grav )*1e-3
-#   print ' Time: {0:.03f} secs\n'.format(  secs )
+def solvePoisson_FFT():
+  copyDensity_knl( cnsv_d, rho_d, grid=grid3D, block=block3D )
+  fft_plan.execute( rho_d, rho_imag_d )
+  FFT_divideK2_knl( pi4, fftKx_d, fftKy_d, fftKz_d, rho_d, rho_imag_d, grid=grid3D, block=block3D )
+  fft_plan.execute( rho_d, rho_imag_d, inverse=True )
+  copyDensity_knl( rho_d, phi_d, grid=grid3D, block=block3D )
 
-convEpsilon = np.float64( 0.0001 )
 if usingGravity:
+  print 'Making FFT 3D plan'
+  fft_plan = Plan( (nDepth, nHeight, nWidth), dtype=np.float64 )
+  print 'Getting initial gravity force by FFT'
+  start_grav.record()
+  solvePoisson_FFT()
+  phi_fft_re = rho_d.get()
+  phi_fft_im = rho_imag_d.get()
+  end_grav.record(), end_grav.synchronize()
+  secs = start_grav.time_till( end_grav )*1e-3
+  print ' Time: {0:.03f} secs\n'.format(  secs )
+
+# phi_d.set( phi_fft_re )
+convEpsilon = np.float64( 0.0001 )
+if usingGravity and not usingFFT:
   print 'Getting initial gravity force'
   # convEpsilon = np.float64( 0.00005 )
   start.record()
-  phi_h = solvePoisson( convEpsilon, copy=True, show=True )
+  phi_sor = solvePoisson( convEpsilon, copy=True, show=True )
   getGravityForce()
   gForceX, gForceY, gForceZ = gForceX_d.get(), gForceY_d.get(), gForceZ_d.get()
   end.record(), end.synchronize()
@@ -444,12 +468,14 @@ print 'outDir: {0}'.format( outDir )
 
 stride = 1
 outFile.create_dataset('rho', data=rho[::stride,::stride,::stride].astype(np.float32))
-outFile.create_dataset('phi', data=phi_h[::stride,::stride,::stride].astype(np.float32))
-# outFile.create_dataset('phi_fft_re', data=phi_fft_re[::stride,::stride,::stride].astype(np.float32))
-# outFile.create_dataset('phi_fft_im', data=phi_fft_im[::stride,::stride,::stride].astype(np.float32))
-outFile.create_dataset('gForceX', data=gForceX[::stride,::stride,::stride].astype(np.float32))
-outFile.create_dataset('gForceY', data=gForceY[::stride,::stride,::stride].astype(np.float32))
-outFile.create_dataset('gForceZ', data=gForceZ[::stride,::stride,::stride].astype(np.float32))
+if usingGravity:
+  outFile.create_dataset('phi_sor', data=phi_sor[::stride,::stride,::stride].astype(np.float32))
+  outFile.create_dataset('phi_theo', data=phi_theo[::stride,::stride,::stride].astype(np.float32))
+  outFile.create_dataset('phi_fft_re', data=phi_fft_re[::stride,::stride,::stride].astype(np.float32))
+  outFile.create_dataset('phi_fft_im', data=phi_fft_im[::stride,::stride,::stride].astype(np.float32))
+  outFile.create_dataset('gForceX', data=gForceX[::stride,::stride,::stride].astype(np.float32))
+  outFile.create_dataset('gForceY', data=gForceY[::stride,::stride,::stride].astype(np.float32))
+  outFile.create_dataset('gForceZ', data=gForceZ[::stride,::stride,::stride].astype(np.float32))
 
 
 outFile.close()

@@ -8,7 +8,8 @@ __global__ void copyDensity( double *cnsv, double *rho ){
 	rho[tid] = cnsv[tid];
 }
 
-__global__ void FFT_divideK2( double *kxfft, double *kyfft, double *kzfft,
+__global__ void FFT_divideK2( const double pi4,
+							double *kxfft, double *kyfft, double *kzfft,
 				      double *data_re, double *data_im){
   int t_j = blockIdx.x*blockDim.x + threadIdx.x;
   int t_i = blockIdx.y*blockDim.y + threadIdx.y;
@@ -19,9 +20,9 @@ __global__ void FFT_divideK2( double *kxfft, double *kyfft, double *kzfft,
   double ky = kyfft[t_i];
   double kz = kzfft[t_k];
   double k2 = kx*kx + ky*ky + kz*kz;
-	k2 = max( k2, 1e-10);
-  data_re[tid] = -data_re[tid]/k2;
-	data_im[tid] = -data_im[tid]/k2;
+	if ( abs( k2 ) < 1e-5 ) k2 = 1 ;
+  data_re[tid] = -data_re[tid]*pi4/k2;
+	data_im[tid] = -data_im[tid]*pi4/k2;
 }
 
 __global__ void iterPoissonStep(  const int parity,
@@ -107,7 +108,7 @@ __global__ void getGravityForce(const int nCells,  const int nW, const int nH, c
   gField_z = ( phi_b - phi_t ) * 0.5 / dz;
 	double p_x, p_y, p_z, rho;
 	rho = cnsv[ 0*nCells + tid ];
-	const int factor = 10;
+	const int factor = 1;
   gForce_x[ tid ] = gField_x * rho * factor;
   gForce_y[ tid ] = gField_y * rho * factor;
   gForce_z[ tid ] = gField_z * rho * factor;
